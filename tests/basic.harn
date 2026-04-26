@@ -1,0 +1,53 @@
+import {
+  activate,
+  call,
+  init,
+  kinds,
+  normalize_inbound,
+  payload_schema,
+  poll_tick,
+  provider_id,
+  shutdown,
+} from "../src/lib"
+
+@complexity(allow)
+pipeline default() {
+  shutdown()
+  assert_eq(provider_id(), "gitea", "provider id")
+  assert_eq(kinds()[0], "webhook", "first kind")
+  assert_eq(payload_schema().harn_schema_name, "GiteaEventPayload", "schema")
+  init({signing_secret: "secret"})
+  let activated = activate([{id: "primary", path: "/hooks/gitea", secrets: {signing_secret: "secret"}}])
+  assert_eq(activated.bindings, 1, "activation count")
+  let body = "{\"action\":\"opened\",\"repository\":{\"full_name\":\"acme/widgets\",\"html_url\":\"https://gitea.example.com/acme/widgets\"},\"sender\":{\"login\":\"ada\"},\"pull_request\":{\"number\":42,\"title\":\"Improve widgets\"}}"
+  let headers = {["x-gitea-event"]: "pull_request", ["x-gitea-delivery"]: "delivery-1"}
+  let signature = "sha256=" + hmac_sha256("secret", body)
+  let raw = {signing_secret: "secret", body_text: body, headers: headers + {["x-gitea-signature"]: signature}}
+  let normalized = normalize_inbound(raw)
+  assert_eq(normalized.type, "event", "envelope type")
+  assert_eq(normalized.event.kind, "pull_request.opened", "event kind")
+  assert_eq(normalized.event.signature_status.state, "verified", "signed status")
+  assert(normalized.event.dedupe_key != nil && normalized.event.dedupe_key != "", "dedupe key")
+  let bad_signature = normalize_inbound(
+    {signing_secret: "secret", body_text: body, headers: headers + {["x-gitea-signature"]: "sha256=00"}},
+  )
+  assert_eq(bad_signature.type, "reject", "bad signature rejects")
+  assert_eq(bad_signature.reject.status, 401, "bad signature status")
+  let invalid_json = normalize_inbound({body_text: "{bad json", headers: headers})
+  assert_eq(invalid_json.type, "reject", "invalid json rejects")
+  http_mock_clear()
+  http_mock(
+    "GET",
+    "https://gitea.example.com/api/v1/projects",
+    {status: 200, body: json_stringify({ok: true})},
+  )
+  let response = call(
+    "api.request",
+    {api_base_url: "https://gitea.example.com/api/v1", path: "/projects", access_token: "token"},
+  )
+  assert_eq(response.ok, true, "api request")
+  let unsupported = call("unknown", {})
+  assert(is_err(unsupported), "unknown method errors")
+  http_mock_clear()
+  shutdown()
+}
