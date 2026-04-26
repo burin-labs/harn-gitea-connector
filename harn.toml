@@ -1,6 +1,6 @@
 [package]
 name = "harn-gitea-connector"
-version = "0.0.0"
+version = "0.1.0"
 description = "Pure-Harn Gitea connector: signed webhooks, self-hosted REST dispatch, and raw API helpers."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/burin-labs/harn-gitea-connector"
