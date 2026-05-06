@@ -20,16 +20,16 @@ pipeline default() {
   let activated = activate([{id: "primary", path: "/hooks/gitea", secrets: {signing_secret: "secret"}}])
   assert_eq(activated.bindings, 1, "activation count")
   let body = "{\"action\":\"opened\",\"repository\":{\"full_name\":\"acme/widgets\",\"html_url\":\"https://gitea.example.com/acme/widgets\"},\"sender\":{\"login\":\"ada\"},\"pull_request\":{\"number\":42,\"title\":\"Improve widgets\"}}"
-  let headers = {["x-gitea-event"]: "pull_request", ["x-gitea-delivery"]: "delivery-1"}
+  let headers = {"x-gitea-event": "pull_request", "x-gitea-delivery": "delivery-1"}
   let signature = "sha256=" + hmac_sha256("secret", body)
-  let raw = {signing_secret: "secret", body_text: body, headers: headers + {["x-gitea-signature"]: signature}}
+  let raw = {signing_secret: "secret", body_text: body, headers: headers + {"x-gitea-signature": signature}}
   let normalized = normalize_inbound(raw)
   assert_eq(normalized.type, "event", "envelope type")
   assert_eq(normalized.event.kind, "pull_request.opened", "event kind")
   assert_eq(normalized.event.signature_status.state, "verified", "signed status")
   assert(normalized.event.dedupe_key != nil && normalized.event.dedupe_key != "", "dedupe key")
   let bad_signature = normalize_inbound(
-    {signing_secret: "secret", body_text: body, headers: headers + {["x-gitea-signature"]: "sha256=00"}},
+    {signing_secret: "secret", body_text: body, headers: headers + {"x-gitea-signature": "sha256=00"}},
   )
   assert_eq(bad_signature.type, "reject", "bad signature rejects")
   assert_eq(bad_signature.reject.status, 401, "bad signature status")
