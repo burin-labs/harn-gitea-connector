@@ -13,6 +13,31 @@ default = "src/lib.harn"
 id = "gitea"
 connector = { harn = "src/lib.harn" }
 
+[providers.setup]
+auth_type = "api-key"
+flow = "api-key"
+required_secrets = ["gitea/api-token", "gitea/webhook-secret"]
+setup_command = ["harn", "connect", "gitea"]
+validation_command = ["harn", "connect", "status", "--connector", "gitea", "--json"]
+
+[[providers.setup.health_checks]]
+id = "api-token"
+kind = "secret"
+secret = "gitea/api-token"
+
+[[providers.setup.health_checks]]
+id = "webhook-secret"
+kind = "secret"
+secret = "gitea/webhook-secret"
+
+[providers.setup.recovery]
+missing_auth = "Store gitea/api-token and gitea/webhook-secret before enabling Gitea bindings."
+expired_credentials = "Rotate gitea/api-token, then rerun the Gitea connection validation."
+revoked_credentials = "Replace gitea/api-token with an active Gitea personal access token."
+missing_scopes = "Grant repository and pull request scopes required by the configured Gitea workflows."
+inaccessible_resource = "Confirm the token can access the target Gitea host, owner, and repository."
+transient_provider_outage = "Retry after the Gitea host API and webhook endpoints are healthy."
+
 [dependencies]
 
 [connector_contract]
