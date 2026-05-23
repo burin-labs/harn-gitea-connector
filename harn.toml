@@ -44,18 +44,24 @@ transient_provider_outage = "Retry after the Gitea host API and webhook endpoint
 [connector_contract]
 version = 1
 
+# Security sweep 2026-05-23 (F3): with no signing secret configured for this binding the
+# connector now fail-closes with 401 missing_signature instead of accepting an unsigned
+# delivery. The contract harness does not seed per-binding secrets, so the unsigned-happy-path
+# fixture inverts to assert the rejection envelope. A future fixture-seeding contract bump
+# can restore an "event" happy-path that exercises full verification end-to-end.
 [[connector_contract.fixtures]]
 provider = "gitea"
-name = "happy path"
+name = "happy path (fail-closed when no secret)"
 kind = "webhook"
 headers = { "x-gitea-event" = "pull_request", "x-gitea-delivery" = "delivery-1" }
 body_json = { action = "opened", repository = { full_name = "acme/widgets" }, sender = { login = "ada" }, pull_request = { number = 42, title = "Improve widgets" } }
-expect_type = "event"
-expect_kind = "pull_request.opened"
-expect_signature_state = "unsigned"
-expect_event_count = 1
-expect_payload_contains = { provider = "gitea", raw = { event = "pull_request" } }
+expect_type = "reject"
+expect_response_status = 401
+expect_event_count = 0
 
+# Malformed JSON still rejects with 400, but now the rejection happens *after* signature
+# verification (F14: verify before parse). Without a configured secret this fixture also hits
+# the F3 fail-closed path and returns 401, not 400. We update the assertion accordingly.
 [[connector_contract.fixtures]]
 provider = "gitea"
 name = "malformed payload"
@@ -63,5 +69,5 @@ kind = "webhook"
 headers = { "x-gitea-event" = "pull_request" }
 body = "{not json"
 expect_type = "reject"
-expect_response_status = 400
+expect_response_status = 401
 expect_event_count = 0
