@@ -4,6 +4,7 @@ import { call, init, shutdown } from "../src/lib"
 pipeline default() {
   shutdown()
   init()
+  egress_policy({allow: ["gitea.example.com"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",
