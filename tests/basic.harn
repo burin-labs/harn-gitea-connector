@@ -5,7 +5,6 @@ import {
   kinds,
   normalize_inbound,
   payload_schema,
-  poll_tick,
   provider_id,
   shutdown,
 } from "../src/lib"
@@ -60,6 +59,7 @@ pipeline default() {
     },
   )
   assert(is_err(ssrf), "absolute URL path rejected")
+  egress_policy({allow: ["gitea.example.com"], default: "deny"})
   http_mock_clear()
   http_mock(
     "GET",

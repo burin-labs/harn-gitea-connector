@@ -378,7 +378,7 @@ fn __signing_secret(raw) {
   if bound != nil && trim(to_string(bound)) != "" {
     return to_string(bound)
   }
-  let env_secret = env(ENV_PREFIX + "_SIGNING_SECRET")
+  let env_secret = __env_get(ENV_PREFIX + "_SIGNING_SECRET")
   if env_secret != nil && trim(to_string(env_secret)) != "" {
     return to_string(env_secret)
   }
@@ -493,11 +493,29 @@ fn __normalized_headers(headers) {
 fn __outbound_config(args) {
   let env_base = ENV_PREFIX + "_API_BASE_URL"
   let env_token = ENV_PREFIX + "_TOKEN"
-  let api_base_url = args?.api_base_url ?? env_or(env_base, DEFAULT_API_BASE_URL)
+  let api_base_url = args?.api_base_url ?? __env_get_or(env_base, DEFAULT_API_BASE_URL)
   let access_token = args?.access_token ?? args?.token ?? args?.personal_access_token ?? args?.app_password
     ?? args?.secrets?.access_token
-    ?? env(env_token)
+    ?? __env_get(env_token)
   return Ok({api_base_url: to_string(api_base_url), access_token: access_token})
+}
+
+fn __env_get(name) {
+  let resolved = try {
+    harness.env.get(name)
+  }
+  if is_err(resolved) {
+    return nil
+  }
+  return unwrap(resolved)
+}
+
+fn __env_get_or(name, fallback) {
+  let resolved = __env_get(name)
+  if resolved == nil {
+    return fallback
+  }
+  return resolved
 }
 
 fn __config_keys() {
@@ -537,7 +555,7 @@ fn __api_request(args) {
   var retried_rate_limit = false
   while true {
     let response_result = try {
-      http_request(method, url, options)
+      harness.net.request(method, url, options)
     }
     if is_err(response_result) {
       return __err("transport", to_string(unwrap_err(response_result)))
@@ -727,7 +745,7 @@ fn __maybe_wait_for_rate_limit(response) {
   if is_err(parsed_reset) {
     return Ok(true)
   }
-  let wait_seconds = unwrap(parsed_reset) - to_int(timestamp())
+  let wait_seconds = unwrap(parsed_reset) - to_int(harness.clock.timestamp())
   if wait_seconds > MAX_RATE_LIMIT_WAIT_SECONDS {
     return __err(
       "rate_limited",
