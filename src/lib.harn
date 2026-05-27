@@ -493,7 +493,7 @@ fn __normalized_headers(headers) {
 fn __outbound_config(args) {
   let env_base = ENV_PREFIX + "_API_BASE_URL"
   let env_token = ENV_PREFIX + "_TOKEN"
-  let api_base_url = args?.api_base_url ?? __env_get_or(env_base, DEFAULT_API_BASE_URL)
+  let api_base_url = args?.api_base_url ?? harness.env.get_or(env_base, DEFAULT_API_BASE_URL)
   let access_token = args?.access_token ?? args?.token ?? args?.personal_access_token ?? args?.app_password
     ?? args?.secrets?.access_token
     ?? __env_get(env_token)
@@ -508,14 +508,6 @@ fn __env_get(name) {
     return nil
   }
   return unwrap(resolved)
-}
-
-fn __env_get_or(name, fallback) {
-  let resolved = __env_get(name)
-  if resolved == nil {
-    return fallback
-  }
-  return resolved
 }
 
 fn __config_keys() {
