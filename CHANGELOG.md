@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Forge-parity pass (C5, refs burin-labs/harn#2951):
+  - **Merge-state surfacing:** `normalize_inbound` now adds `payload.merge = { is_conflict,
+    merge_state }` to `pull_request` events. `merge_state` is `merged`/`mergeable`/`conflict`/
+    `unknown`, derived from Gitea's tri-state `pull_request.mergeable`; an unknown (`nil`)
+    mergeable never reads as a conflict.
+  - **`@`-mention extractor:** `issues`, `issue_comment`, and PR review-comment events now carry
+    `payload.mention = { actor, candidates: [{ handle, command, rest }], target_kind, target_id,
+    url }`. Extraction is pure CPU-only string scanning (no network); the key is omitted when no
+    mention is present.
+  - **Intra-file dedup:** the copy-pasted comment-POST blocks behind `pull_requests.comment` and
+    `issues.comment` are factored into a shared `__comment_post` helper.
+
 - Security sweep 2026-05-23 (hardening, fail-closed defaults):
   - **F1 (CRITICAL) SSRF:** `__api_url` no longer treats absolute-URL `path` arguments as an
     escape from the configured `api_base_url`; absolute URLs are rejected so the attached

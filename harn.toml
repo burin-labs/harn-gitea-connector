@@ -1,6 +1,6 @@
 [package]
 name = "harn-gitea-connector"
-version = "0.1.0"
+version = "0.2.0"
 description = "Pure-Harn Gitea connector: signed webhooks, self-hosted REST dispatch, and raw API helpers."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/burin-labs/harn-gitea-connector"
@@ -68,6 +68,32 @@ name = "malformed payload"
 kind = "webhook"
 headers = { "x-gitea-event" = "pull_request" }
 body = "{not json"
+expect_type = "reject"
+expect_response_status = 401
+expect_event_count = 0
+
+# C5 forge-parity: a conflicting pull_request (mergeable=false) still fail-closes at the
+# unsigned gate here because the contract harness seeds no per-binding secret. The verified
+# happy-path that surfaces `payload.merge.{is_conflict, merge_state}` is exercised in
+# tests/parity.harn, which seeds the signing secret via init()/activate().
+[[connector_contract.fixtures]]
+provider = "gitea"
+name = "pull_request conflict (fail-closed when no secret)"
+kind = "webhook"
+headers = { "x-gitea-event" = "pull_request", "x-gitea-delivery" = "delivery-conflict" }
+body_json = { action = "synchronized", repository = { full_name = "acme/widgets" }, sender = { login = "ada" }, pull_request = { number = 7, title = "Conflicting change", mergeable = false } }
+expect_type = "reject"
+expect_response_status = 401
+expect_event_count = 0
+
+# C5 forge-parity: an issue_comment carrying an `@handle command` mention. Verified extraction
+# of `payload.mention.candidates` is covered in tests/parity.harn; here it fail-closes (no secret).
+[[connector_contract.fixtures]]
+provider = "gitea"
+name = "issue_comment mention (fail-closed when no secret)"
+kind = "webhook"
+headers = { "x-gitea-event" = "issue_comment", "x-gitea-delivery" = "delivery-mention" }
+body_json = { action = "created", repository = { full_name = "acme/widgets" }, sender = { login = "carol" }, issue = { number = 12 }, comment = { body = "@harn-bot approve and merge now" } }
 expect_type = "reject"
 expect_response_status = 401
 expect_event_count = 0

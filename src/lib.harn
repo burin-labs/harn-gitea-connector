@@ -180,14 +180,7 @@ pub fn call(method, args = {}) {
     return __rate_limit_acquire(args ?? {})
   }
   if method == "pull_requests.comment" {
-    return __api_request(
-      args
-        + {
-        method: "POST",
-        path: args?.path ?? __pull_request_comment_path(args),
-        body: {body: args?.body ?? args?.comment},
-      },
-    )
+    return __comment_post(args, __pull_request_comment_path(args))
   }
   if method == "pull_requests.update" {
     return __api_request(
@@ -208,14 +201,7 @@ pub fn call(method, args = {}) {
     return __paginate_all("/repos/" + __repo_ref(args) + "/pulls", args)
   }
   if method == "issues.comment" {
-    return __api_request(
-      args
-        + {
-        method: "POST",
-        path: args?.path ?? __issue_comment_path(args),
-        body: {body: args?.body ?? args?.comment},
-      },
-    )
+    return __comment_post(args, __issue_comment_path(args))
   }
   if method == "issues.list" {
     return __api_request(
@@ -388,21 +374,185 @@ fn __signing_secret(raw) {
 @complexity(allow)
 fn __build_event(base_event, payload, raw, headers, signature_status, body_text) {
   let kind = __event_kind(base_event, payload)
+  var event_payload = {
+    event: base_event,
+    action: payload?.action,
+    repository: __repository(payload),
+    actor: __actor(payload),
+    resource: __resource(payload),
+    raw: payload,
+  }
+  let merge = __merge_state(base_event, payload)
+  if merge != nil {
+    event_payload["merge"] = merge
+  }
+  let mention = __mention(base_event, payload)
+  if mention != nil {
+    event_payload["mention"] = mention
+  }
   return {
     kind: kind,
     occurred_at: raw?.occurred_at ?? payload?.updated_at ?? payload?.created_at ?? payload?.timestamp,
     dedupe_key: __dedupe_key(base_event, payload, raw, headers, body_text),
     signature_status: __signature_status(signature_status),
-    payload: {
-      event: base_event,
-      action: payload?.action,
-      repository: __repository(payload),
-      actor: __actor(payload),
-      resource: __resource(payload),
-      raw: payload,
-    },
+    payload: event_payload,
     headers: __normalized_headers(headers),
   }
+}
+
+/**
+ * Surface PR merge/conflict state for pull_request events. Gitea exposes
+ * `pull_request.mergeable` (bool); a `false` value means the PR currently has
+ * conflicts. Returns `nil` for non-pull_request events or when no PR object is
+ * present, so the normalized envelope only carries `merge` when meaningful.
+ */
+fn __merge_state(base_event, payload) {
+  if __normalize_kind(base_event) != "pull_request" {
+    return nil
+  }
+  let pull = payload?.pull_request ?? payload?.pullrequest
+  if pull == nil {
+    return nil
+  }
+  let label = __merge_state_label(pull)
+  return {is_conflict: label == "conflict", merge_state: label}
+}
+
+/**
+ * `mergeable` is tri-state: nil (unknown — Gitea has not computed it yet), true,
+ * or false. We classify explicitly via type_of so an unknown value never reads
+ * as a conflict (which a bare `!mergeable` would wrongly do for nil).
+ */
+fn __merge_state_label(pull) {
+  if pull?.merged ?? false {
+    return "merged"
+  }
+  let mergeable = pull?.mergeable
+  if type_of(mergeable) != "bool" {
+    return "unknown"
+  }
+  if mergeable {
+    return "mergeable"
+  }
+  return "conflict"
+}
+
+let MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+
+/**
+ * Extract `@handle command args...` mentions from issue, issue_comment, and PR
+ * review-comment bodies. Pure CPU-only string scanning — no network. Returns
+ * `nil` when the event has no scannable body or yields no candidates so the
+ * envelope only carries `mention` when there is something actionable.
+ */
+fn __mention(base_event, payload) {
+  let kind = __normalize_kind(base_event)
+  let scan = __mention_scan_target(kind, payload)
+  if scan == nil {
+    return nil
+  }
+  let candidates = __extract_mentions(scan.text)
+  if len(candidates) == 0 {
+    return nil
+  }
+  let actor = __actor(payload)
+  return {
+    actor: actor?.username,
+    candidates: candidates,
+    target_id: scan.target_id,
+    target_kind: scan.target_kind,
+    url: scan.url,
+  }
+}
+
+fn __mention_scan_target(kind, payload) {
+  let comment = payload?.comment
+  if kind == "issue_comment" || comment != nil {
+    if comment == nil {
+      return nil
+    }
+    let issue = payload?.issue ?? payload?.pull_request
+    return {
+      target_id: issue?.number ?? issue?.id,
+      target_kind: if payload?.pull_request != nil {
+        "pull_request_comment"
+      } else {
+        "issue_comment"
+      },
+      text: comment?.body,
+      url: comment?.html_url ?? comment?.url,
+    }
+  }
+  if kind == "issues" {
+    let issue = payload?.issue
+    if issue == nil {
+      return nil
+    }
+    return {
+      target_id: issue?.number ?? issue?.id,
+      target_kind: "issue",
+      text: issue?.body,
+      url: issue?.html_url ?? issue?.url,
+    }
+  }
+  return nil
+}
+
+fn __extract_mentions(text) {
+  let body = to_string(text ?? "")
+  if trim(body) == "" {
+    return []
+  }
+  var candidates = []
+  for line in split(body, "\n") {
+    candidates = candidates + __extract_line_mentions(line)
+  }
+  return candidates
+}
+
+fn __extract_line_mentions(line) {
+  let words = split(trim(line), " ")
+  var candidates = []
+  var i = 0
+  while i < len(words) {
+    let word = words[i]
+    if starts_with(word, "@") && len(word) > 1 {
+      let handle = __strip_handle(word[1:len(word)])
+      if handle != "" {
+        let command = if i + 1 < len(words) {
+          words[i + 1]
+        } else {
+          nil
+        }
+        candidates = candidates + [{command: command, handle: handle, rest: __join_from(words, i + 2)}]
+      }
+    }
+    i = i + 1
+  }
+  return candidates
+}
+
+fn __join_from(words, start) {
+  var rest = []
+  var j = start
+  while j < len(words) {
+    rest = rest + [words[j]]
+    j = j + 1
+  }
+  return join(rest, " ")
+}
+
+fn __strip_handle(raw) {
+  var out = ""
+  for i in range(0, len(raw)) {
+    let ch = raw[i:i + 1]
+    if contains(MENTION_HANDLE_CHARS, ch) {
+      out = out + ch
+    } else {
+      return out
+    }
+  }
+  return out
 }
 
 fn __signature_status(status) {
@@ -622,6 +772,18 @@ fn __repo_ref(args) {
     return url_encode(to_string(owner)) + "/" + url_encode(to_string(repo))
   }
   return url_encode(to_string(args?.repo_full_name ?? args?.repository_full_name ?? ""))
+}
+
+/**
+ * POST a `{body}` comment to the given default path. `args.path` overrides the
+ * computed path; `args.comment` is accepted as an alias for `args.body`. Shared
+ * by `pull_requests.comment` and `issues.comment`, which only differ in path.
+ */
+fn __comment_post(args, default_path) {
+  return __api_request(
+    args
+      + {method: "POST", path: args?.path ?? default_path, body: {body: args?.body ?? args?.comment}},
+  )
 }
 
 fn __pull_request_path(args) {

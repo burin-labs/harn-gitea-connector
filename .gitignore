@@ -2,3 +2,4 @@
 .harn-runs/
 target/
 .DS_Store
+harn.lock
