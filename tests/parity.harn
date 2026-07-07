@@ -1,13 +1,13 @@
 import { activate, init, normalize_inbound, shutdown } from "../src/lib"
 
-let SECRET = "parity-secret"
+const SECRET = "parity-secret"
 
 fn __sign(body) {
   return "sha256=" + hmac_sha256(SECRET, body)
 }
 
 fn __deliver(event, body) {
-  let headers = {"x-gitea-delivery": "d-" + event, "x-gitea-event": event, "x-gitea-signature": __sign(body)}
+  const headers = {"x-gitea-delivery": "d-" + event, "x-gitea-event": event, "x-gitea-signature": __sign(body)}
   return normalize_inbound({binding_id: "primary", body_text: body, headers: headers})
 }
 
@@ -17,7 +17,7 @@ pipeline default() {
   init({signing_secret: SECRET})
   activate([{id: "primary", path: "/hooks/gitea", secrets: {signing_secret: SECRET}}])
   // Merge-state: a conflicting (mergeable=false) pull_request surfaces is_conflict + merge_state.
-  let conflict_body = json_stringify(
+  const conflict_body = json_stringify(
     {
       action: "synchronized",
       pull_request: {mergeable: false, number: 7, title: "Conflicting change"},
@@ -25,12 +25,12 @@ pipeline default() {
       sender: {login: "ada"},
     },
   )
-  let conflict = __deliver("pull_request", conflict_body)
+  const conflict = __deliver("pull_request", conflict_body)
   assert_eq(conflict.type, "event", "conflict envelope type")
   assert_eq(conflict.event.payload.merge.is_conflict, true, "is_conflict true")
   assert_eq(conflict.event.payload.merge.merge_state, "conflict", "merge_state conflict")
   // Merge-state: a clean (mergeable=true) pull_request is not a conflict.
-  let clean_body = json_stringify(
+  const clean_body = json_stringify(
     {
       action: "opened",
       pull_request: {mergeable: true, number: 8, title: "Clean change"},
@@ -38,11 +38,11 @@ pipeline default() {
       sender: {login: "ada"},
     },
   )
-  let clean = __deliver("pull_request", clean_body)
+  const clean = __deliver("pull_request", clean_body)
   assert_eq(clean.event.payload.merge.is_conflict, false, "clean not conflict")
   assert_eq(clean.event.payload.merge.merge_state, "mergeable", "merge_state mergeable")
   // Merge-state: an unknown mergeable (nil) classifies as unknown, never a conflict.
-  let unknown_body = json_stringify(
+  const unknown_body = json_stringify(
     {
       action: "opened",
       pull_request: {number: 9},
@@ -50,11 +50,11 @@ pipeline default() {
       sender: {login: "ada"},
     },
   )
-  let unknown = __deliver("pull_request", unknown_body)
+  const unknown = __deliver("pull_request", unknown_body)
   assert_eq(unknown.event.payload.merge.is_conflict, false, "unknown not conflict")
   assert_eq(unknown.event.payload.merge.merge_state, "unknown", "merge_state unknown")
   // Mention: an issue_comment body yields a typed candidate {handle, command, rest}.
-  let comment_body = json_stringify(
+  const comment_body = json_stringify(
     {
       action: "created",
       comment: {body: "@harn-bot approve and merge now", html_url: "https://gitea.example.com/c/1"},
@@ -63,17 +63,17 @@ pipeline default() {
       sender: {login: "carol"},
     },
   )
-  let mention = __deliver("issue_comment", comment_body)
+  const mention = __deliver("issue_comment", comment_body)
   assert_eq(mention.event.payload.mention.actor, "carol", "mention actor")
   assert_eq(mention.event.payload.mention.target_kind, "issue_comment", "mention target_kind")
   assert_eq(mention.event.payload.mention.target_id, 12, "mention target_id")
   assert_eq(mention.event.payload.mention.url, "https://gitea.example.com/c/1", "mention url")
-  let cand = mention.event.payload.mention.candidates[0]
+  const cand = mention.event.payload.mention.candidates[0]
   assert_eq(cand.handle, "harn-bot", "candidate handle")
   assert_eq(cand.command, "approve", "candidate command")
   assert_eq(cand.rest, "and merge now", "candidate rest")
   // Mention: an issue body with no @mention carries no mention key.
-  let plain_issue = json_stringify(
+  const plain_issue = json_stringify(
     {
       action: "opened",
       issue: {body: "nothing to see here", number: 3},
@@ -81,7 +81,7 @@ pipeline default() {
       sender: {login: "dave"},
     },
   )
-  let no_mention = __deliver("issues", plain_issue)
+  const no_mention = __deliver("issues", plain_issue)
   assert_eq(no_mention.event.payload.get("mention"), nil, "no mention key when empty")
   shutdown()
 }

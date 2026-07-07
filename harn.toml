@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "Pure-Harn Gitea connector: signed webhooks, self-hosted REST dispatch, and raw API helpers."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/burin-labs/harn-gitea-connector"
-harn = ">=0.8,<0.9"
+harn = ">=0.10,<0.11"
 connector_contract = "v1"
 
 [exports]
