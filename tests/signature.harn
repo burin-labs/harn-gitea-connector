@@ -1,8 +1,8 @@
 import { activate, init, normalize_inbound, shutdown } from "../src/lib"
 
-let BODY = "{\"action\":\"opened\",\"repository\":{\"full_name\":\"acme/widgets\"},\"sender\":{\"login\":\"ada\"},\"pull_request\":{\"number\":1}}"
+const BODY = "{\"action\":\"opened\",\"repository\":{\"full_name\":\"acme/widgets\"},\"sender\":{\"login\":\"ada\"},\"pull_request\":{\"number\":1}}"
 
-let HEADERS = {"x-gitea-event": "pull_request", "x-gitea-delivery": "delivery-1"}
+const HEADERS = {"x-gitea-event": "pull_request", "x-gitea-delivery": "delivery-1"}
 
 @complexity(allow)
 pipeline default() {
@@ -10,15 +10,15 @@ pipeline default() {
   // F3: with no signing secret configured, inbound webhooks fail-closed (401).
   init()
   activate([{id: "primary", path: "/hooks/gitea"}])
-  let no_secret = normalize_inbound({binding_id: "primary", body_text: BODY, headers: HEADERS})
+  const no_secret = normalize_inbound({binding_id: "primary", body_text: BODY, headers: HEADERS})
   assert_eq(no_secret.type, "reject", "fail-closed when no secret configured")
   assert_eq(no_secret.reject.status, 401, "fail-closed status is 401")
   shutdown()
   // Configure a signing secret via ctx/binding and exercise the verified paths.
   init({signing_secret: "super-secret"})
   activate([{id: "primary", path: "/hooks/gitea", secrets: {signing_secret: "super-secret"}}])
-  let raw_signature = hmac_sha256("super-secret", BODY)
-  let prefixed = normalize_inbound(
+  const raw_signature = hmac_sha256("super-secret", BODY)
+  const prefixed = normalize_inbound(
     {
       binding_id: "primary",
       body_text: BODY,
@@ -26,14 +26,14 @@ pipeline default() {
     },
   )
   assert_eq(prefixed.event.signature_status.state, "verified", "sha256= prefixed signature verifies")
-  let unprefixed = normalize_inbound(
+  const unprefixed = normalize_inbound(
     {binding_id: "primary", body_text: BODY, headers: HEADERS + {"x-gitea-signature": raw_signature}},
   )
   assert_eq(unprefixed.event.signature_status.state, "verified", "unprefixed hex signature verifies")
-  let missing = normalize_inbound({binding_id: "primary", body_text: BODY, headers: HEADERS})
+  const missing = normalize_inbound({binding_id: "primary", body_text: BODY, headers: HEADERS})
   assert_eq(missing.type, "reject", "missing signature header rejects when secret is configured")
   assert_eq(missing.reject.status, 401, "missing signature is unauthorized")
-  let wrong_key = normalize_inbound(
+  const wrong_key = normalize_inbound(
     {
       binding_id: "primary",
       body_text: BODY,

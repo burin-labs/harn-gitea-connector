@@ -4,35 +4,35 @@ import {
   verify_hmac_signature,
 } from "std/connectors/shared"
 
-let PROVIDER_ID = "gitea"
+const PROVIDER_ID = "gitea"
 
-let STATE_KEY = "harn-gitea-connector.state"
+const STATE_KEY = "harn-gitea-connector.state"
 
-let RATE_LIMIT_STATE_KEY = "harn-gitea-connector.rate_limit"
+const RATE_LIMIT_STATE_KEY = "harn-gitea-connector.rate_limit"
 
-let DEFAULT_API_BASE_URL = "https://gitea.example.com/api/v1"
+const DEFAULT_API_BASE_URL = "https://gitea.example.com/api/v1"
 
-let ENV_PREFIX = "GITEA"
+const ENV_PREFIX = "GITEA"
 
-let SIGNATURE_HEADER = "x-gitea-signature"
+const SIGNATURE_HEADER = "x-gitea-signature"
 
-let EVENT_HEADER = "x-gitea-event"
+const EVENT_HEADER = "x-gitea-event"
 
-let SUPPORTED_EVENTS = ["push", "pull_request", "issues", "issue_comment", "release", "repository", "star"]
+const SUPPORTED_EVENTS = ["push", "pull_request", "issues", "issue_comment", "release", "repository", "star"]
 
-let DELIVERY_HEADERS = ["x-gitea-delivery"]
+const DELIVERY_HEADERS = ["x-gitea-delivery"]
 
-let DEFAULT_PAGE_LIMIT = 50
+const DEFAULT_PAGE_LIMIT = 50
 
-let MAX_RATE_LIMIT_WAIT_SECONDS = 60
+const MAX_RATE_LIMIT_WAIT_SECONDS = 60
 
-let DEFAULT_RATE_LIMIT_CAPACITY = 60
+const DEFAULT_RATE_LIMIT_CAPACITY = 60
 
-let DEFAULT_RATE_LIMIT_REFILL_TOKENS = 1
+const DEFAULT_RATE_LIMIT_REFILL_TOKENS = 1
 
-let DEFAULT_RATE_LIMIT_REFILL_INTERVAL_MS = 1000
+const DEFAULT_RATE_LIMIT_REFILL_INTERVAL_MS = 1000
 
-let OUTBOUND_METHODS = [
+const OUTBOUND_METHODS = [
   "api.request",
   "pull_requests.comment",
   "pull_requests.update",
@@ -79,18 +79,18 @@ pub fn payload_schema() {
 
 /** Initialize connector state with orchestrator context. */
 pub fn init(ctx = nil) {
-  let next = __state() + {initialized: true, ctx: ctx ?? {}}
+  const next = __state() + {initialized: true, ctx: ctx ?? {}}
   __set_state(next)
   return next
 }
 
 /** Activate configured trigger bindings. */
 pub fn activate(bindings = []) {
-  var by_id = {}
-  var seen_paths = {}
+  let by_id = {}
+  let seen_paths = {}
   for binding in bindings ?? [] {
-    let binding_id = (binding?.binding_id ?? binding?.id ?? "binding-") + to_string(len(by_id.keys()))
-    let path = binding?.path ?? binding?.match?.path
+    const binding_id = (binding?.binding_id ?? binding?.id ?? "binding-") + to_string(len(by_id.keys()))
+    const path = binding?.path ?? binding?.match?.path
     if path != nil && path != "" {
       if seen_paths.get(path) {
         return __err(
@@ -102,7 +102,7 @@ pub fn activate(bindings = []) {
     }
     by_id[binding_id] = binding + {binding_id: binding_id}
   }
-  let next = __state() + {bindings: by_id, active: true}
+  const next = __state() + {bindings: by_id, active: true}
   __set_state(next)
   return {provider: PROVIDER_ID, bindings: len(by_id.keys())}
 }
@@ -124,27 +124,27 @@ pub fn shutdown() {
 @complexity(allow)
 /** Verify and normalize an inbound webhook request. */
 pub fn normalize_inbound(raw) {
-  let headers = raw?.headers ?? {}
+  const headers = raw?.headers ?? {}
   // Resolve the signed surface (raw bytes preferred over body_text) before parsing JSON so an
   // unsigned/oversized payload cannot exhaust the parser ahead of signature verification.
-  let signed = __signed_surface(raw)
+  const signed = __signed_surface(raw)
   if is_err(signed) {
     return __reject_err(unwrap_err(signed))
   }
-  let body_text = unwrap(signed)
-  let verified = __verify_signature(raw, headers, body_text)
+  const body_text = unwrap(signed)
+  const verified = __verify_signature(raw, headers, body_text)
   if is_err(verified) {
     return __reject_err(unwrap_err(verified))
   }
-  let signature_status = unwrap(verified)
-  let parsed = try {
+  const signature_status = unwrap(verified)
+  const parsed = try {
     json_parse(body_text)
   }
   if is_err(parsed) {
     return __reject(400, "invalid_json", PROVIDER_ID + " payload body is not valid JSON")
   }
-  let payload = unwrap(parsed)
-  let base_event = __base_event(payload, headers)
+  const payload = unwrap(parsed)
+  const base_event = __base_event(payload, headers)
   if base_event == nil || base_event == "" {
     return __reject(400, "missing_event", "missing " + PROVIDER_ID + " event header or payload event")
   }
@@ -155,7 +155,7 @@ pub fn normalize_inbound(raw) {
       "unsupported " + PROVIDER_ID + " event `" + to_string(base_event) + "`",
     )
   }
-  let event = __build_event(base_event, payload, raw, headers, signature_status, body_text)
+  const event = __build_event(base_event, payload, raw, headers, signature_status, body_text)
   return {type: "event", event: event}
 }
 
@@ -252,8 +252,8 @@ fn __reject(status, code, message) {
 }
 
 fn __reject_err(err) {
-  let code = err?.code ?? "rejected"
-  let status = if code == "invalid_signature" || code == "missing_signature" {
+  const code = err?.code ?? "rejected"
+  const status = if code == "invalid_signature" || code == "missing_signature" {
     401
   } else if code == "missing_binding_id" || code == "missing_body" || code == "invalid_body" {
     400
@@ -264,7 +264,7 @@ fn __reject_err(err) {
 }
 
 fn __header(headers, name) {
-  let wanted = lowercase(name)
+  const wanted = lowercase(name)
   for entry in (headers ?? {}).entries() {
     if lowercase(trim(to_string(entry.key))) == wanted {
       return trim(to_string(entry.value))
@@ -274,7 +274,7 @@ fn __header(headers, name) {
 }
 
 fn __base_event(payload, headers) {
-  let from_header = __header(headers, EVENT_HEADER)
+  const from_header = __header(headers, EVENT_HEADER)
   if from_header != nil && from_header != "" {
     return to_string(from_header)
   }
@@ -285,11 +285,11 @@ fn __supports_event(event) {
   if contains(SUPPORTED_EVENTS, event) {
     return true
   }
-  let normalized = __normalize_kind(event)
+  const normalized = __normalize_kind(event)
   // Match either an exact normalized name (e.g. "push") or a fully-qualified subkind
   // ("push.created"). A bare prefix is rejected so "pushy" never spoofs "push".
   for supported in SUPPORTED_EVENTS {
-    let supported_norm = __normalize_kind(supported)
+    const supported_norm = __normalize_kind(supported)
     if normalized == supported_norm || starts_with(normalized, supported_norm + ".") {
       return true
     }
@@ -298,18 +298,18 @@ fn __supports_event(event) {
 }
 
 fn __verify_signature(raw, headers, body_text) {
-  let binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
+  const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
   if binding_id == nil || trim(to_string(binding_id)) == "" {
     return __err("missing_binding_id", "request did not include a binding_id; cannot resolve secret")
   }
-  let secret = __signing_secret(raw)
+  const secret = __signing_secret(raw)
   // Fail-closed: refuse delivery when no signing secret is configured for this binding. Hosts
   // must configure a secret in connector ctx, the per-binding state, or env before bindings
   // accept webhooks.
   if secret == nil || trim(to_string(secret)) == "" {
     return __err("missing_signature", "no signing secret configured for this binding")
   }
-  let provided = __header(headers, SIGNATURE_HEADER)
+  const provided = __header(headers, SIGNATURE_HEADER)
   if provided == nil || provided == "" {
     return __err("missing_signature", SIGNATURE_HEADER + " header missing but a signing_secret is configured")
   }
@@ -325,13 +325,13 @@ fn __verify_signature(raw, headers, body_text) {
  * request outright when neither field is present so we never HMAC over "" by accident.
  */
 fn __signed_surface(raw) {
-  let body_text = raw?.body_text ?? raw?.body
+  const body_text = raw?.body_text ?? raw?.body
   if body_text != nil {
     return Ok(to_string(body_text))
   }
-  let body_b64 = raw?.body_base64
+  const body_b64 = raw?.body_base64
   if body_b64 != nil && trim(to_string(body_b64)) != "" {
-    let decoded = try {
+    const decoded = try {
       base64_decode(to_string(body_b64))
     }
     if is_err(decoded) {
@@ -349,22 +349,22 @@ fn __signed_surface(raw) {
  * so that secrets are never resolved without an explicit binding pointer.
  */
 fn __signing_secret(raw) {
-  let state = __state()
-  let ctx_secret = state?.ctx?.signing_secret ?? state?.ctx?.secrets?.signing_secret
+  const state = __state()
+  const ctx_secret = state?.ctx?.signing_secret ?? state?.ctx?.secrets?.signing_secret
   if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
     return to_string(ctx_secret)
   }
-  let binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
+  const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
   if binding_id == nil || trim(to_string(binding_id)) == "" {
     return nil
   }
-  let bindings = state?.bindings ?? {}
-  let binding = bindings.get(binding_id)
-  let bound = binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
+  const bindings = state?.bindings ?? {}
+  const binding = bindings.get(binding_id)
+  const bound = binding?.signing_secret ?? binding?.secrets?.signing_secret ?? binding?.config?.signing_secret
   if bound != nil && trim(to_string(bound)) != "" {
     return to_string(bound)
   }
-  let env_secret = __env_get(ENV_PREFIX + "_SIGNING_SECRET")
+  const env_secret = __env_get(ENV_PREFIX + "_SIGNING_SECRET")
   if env_secret != nil && trim(to_string(env_secret)) != "" {
     return to_string(env_secret)
   }
@@ -373,8 +373,8 @@ fn __signing_secret(raw) {
 
 @complexity(allow)
 fn __build_event(base_event, payload, raw, headers, signature_status, body_text) {
-  let kind = __event_kind(base_event, payload)
-  var event_payload = {
+  const kind = __event_kind(base_event, payload)
+  let event_payload = {
     event: base_event,
     action: payload?.action,
     repository: __repository(payload),
@@ -382,11 +382,11 @@ fn __build_event(base_event, payload, raw, headers, signature_status, body_text)
     resource: __resource(payload),
     raw: payload,
   }
-  let merge = __merge_state(base_event, payload)
+  const merge = __merge_state(base_event, payload)
   if merge != nil {
     event_payload["merge"] = merge
   }
-  let mention = __mention(base_event, payload)
+  const mention = __mention(base_event, payload)
   if mention != nil {
     event_payload["mention"] = mention
   }
@@ -410,11 +410,11 @@ fn __merge_state(base_event, payload) {
   if __normalize_kind(base_event) != "pull_request" {
     return nil
   }
-  let pull = payload?.pull_request ?? payload?.pullrequest
+  const pull = payload?.pull_request ?? payload?.pullrequest
   if pull == nil {
     return nil
   }
-  let label = __merge_state_label(pull)
+  const label = __merge_state_label(pull)
   return {is_conflict: label == "conflict", merge_state: label}
 }
 
@@ -427,7 +427,7 @@ fn __merge_state_label(pull) {
   if pull?.merged ?? false {
     return "merged"
   }
-  let mergeable = pull?.mergeable
+  const mergeable = pull?.mergeable
   if type_of(mergeable) != "bool" {
     return "unknown"
   }
@@ -437,7 +437,7 @@ fn __merge_state_label(pull) {
   return "conflict"
 }
 
-let MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+const MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
 
 /**
  * Extract `@handle command args...` mentions from issue, issue_comment, and PR
@@ -446,16 +446,16 @@ let MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ
  * envelope only carries `mention` when there is something actionable.
  */
 fn __mention(base_event, payload) {
-  let kind = __normalize_kind(base_event)
-  let scan = __mention_scan_target(kind, payload)
+  const kind = __normalize_kind(base_event)
+  const scan = __mention_scan_target(kind, payload)
   if scan == nil {
     return nil
   }
-  let candidates = __extract_mentions(scan.text)
+  const candidates = __extract_mentions(scan.text)
   if len(candidates) == 0 {
     return nil
   }
-  let actor = __actor(payload)
+  const actor = __actor(payload)
   return {
     actor: actor?.username,
     candidates: candidates,
@@ -466,12 +466,12 @@ fn __mention(base_event, payload) {
 }
 
 fn __mention_scan_target(kind, payload) {
-  let comment = payload?.comment
+  const comment = payload?.comment
   if kind == "issue_comment" || comment != nil {
     if comment == nil {
       return nil
     }
-    let issue = payload?.issue ?? payload?.pull_request
+    const issue = payload?.issue ?? payload?.pull_request
     return {
       target_id: issue?.number ?? issue?.id,
       target_kind: if payload?.pull_request != nil {
@@ -484,7 +484,7 @@ fn __mention_scan_target(kind, payload) {
     }
   }
   if kind == "issues" {
-    let issue = payload?.issue
+    const issue = payload?.issue
     if issue == nil {
       return nil
     }
@@ -499,11 +499,11 @@ fn __mention_scan_target(kind, payload) {
 }
 
 fn __extract_mentions(text) {
-  let body = to_string(text ?? "")
+  const body = to_string(text ?? "")
   if trim(body) == "" {
     return []
   }
-  var candidates = []
+  let candidates = []
   for line in split(body, "\n") {
     candidates = candidates + __extract_line_mentions(line)
   }
@@ -511,15 +511,15 @@ fn __extract_mentions(text) {
 }
 
 fn __extract_line_mentions(line) {
-  let words = split(trim(line), " ")
-  var candidates = []
-  var i = 0
+  const words = split(trim(line), " ")
+  let candidates = []
+  let i = 0
   while i < len(words) {
-    let word = words[i]
+    const word = words[i]
     if starts_with(word, "@") && len(word) > 1 {
-      let handle = __strip_handle(word[1:len(word)])
+      const handle = __strip_handle(word[1:len(word)])
       if handle != "" {
-        let command = if i + 1 < len(words) {
+        const command = if i + 1 < len(words) {
           words[i + 1]
         } else {
           nil
@@ -533,8 +533,8 @@ fn __extract_line_mentions(line) {
 }
 
 fn __join_from(words, start) {
-  var rest = []
-  var j = start
+  let rest = []
+  let j = start
   while j < len(words) {
     rest = rest + [words[j]]
     j = j + 1
@@ -543,9 +543,9 @@ fn __join_from(words, start) {
 }
 
 fn __strip_handle(raw) {
-  var out = ""
+  let out = ""
   for i in range(0, len(raw)) {
-    let ch = raw[i:i + 1]
+    const ch = raw[i:i + 1]
     if contains(MENTION_HANDLE_CHARS, ch) {
       out = out + ch
     } else {
@@ -563,8 +563,8 @@ fn __signature_status(status) {
 }
 
 fn __event_kind(base_event, payload) {
-  let normalized = __normalize_kind(base_event)
-  let action = payload?.action ?? payload?.pullrequest?.state ?? payload?.object_attributes?.action
+  const normalized = __normalize_kind(base_event)
+  const action = payload?.action ?? payload?.pullrequest?.state ?? payload?.object_attributes?.action
   if action == nil || action == "" || contains(normalized, ".") {
     return normalized
   }
@@ -576,7 +576,7 @@ fn __normalize_kind(value) {
 }
 
 fn __repository(payload) {
-  let repo = payload?.repository ?? payload?.repo ?? {}
+  const repo = payload?.repository ?? payload?.repo ?? {}
   return {
     id: repo?.id ?? repo?.uuid,
     name: repo?.name,
@@ -586,7 +586,7 @@ fn __repository(payload) {
 }
 
 fn __actor(payload) {
-  let actor = payload?.sender ?? payload?.user ?? payload?.actor ?? payload?.pusher ?? {}
+  const actor = payload?.sender ?? payload?.user ?? payload?.actor ?? payload?.pusher ?? {}
   return {
     id: actor?.id ?? actor?.uuid,
     username: actor?.login ?? actor?.username ?? actor?.nickname ?? actor?.canonical_name,
@@ -608,30 +608,30 @@ fn __dedupe_key(base_event, payload, raw, headers, body_text) {
   // constant) or evade it (vary id) at will. When no delivery header is present, derive the
   // key from immutable host-side fields.
   for header in DELIVERY_HEADERS {
-    let value = __header(headers, header)
+    const value = __header(headers, header)
     if value != nil && value != "" {
       return PROVIDER_ID + ":" + __normalize_kind(base_event) + ":" + to_string(value)
     }
   }
-  let binding_id = raw?.metadata?.binding_id ?? raw?.binding_id ?? ""
-  let received_at = raw?.received_at ?? raw?.occurred_at ?? ""
-  let body_b64 = raw?.body_base64 ?? body_text
+  const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id ?? ""
+  const received_at = raw?.received_at ?? raw?.occurred_at ?? ""
+  const body_b64 = raw?.body_base64 ?? body_text
   return PROVIDER_ID + ":" + __normalize_kind(base_event) + ":"
     + sha256(to_string(body_b64) + "|" + to_string(received_at) + "|" + to_string(binding_id))
 }
 
 fn __normalized_headers(headers) {
-  var normalized = {}
-  let event = __header(headers, EVENT_HEADER)
+  let normalized = {}
+  const event = __header(headers, EVENT_HEADER)
   if event != nil {
     normalized[EVENT_HEADER] = event
   }
-  let signature = __header(headers, SIGNATURE_HEADER)
+  const signature = __header(headers, SIGNATURE_HEADER)
   if signature != nil {
     normalized[SIGNATURE_HEADER] = signature
   }
   for header in DELIVERY_HEADERS {
-    let value = __header(headers, header)
+    const value = __header(headers, header)
     if value != nil {
       normalized[header] = value
     }
@@ -641,17 +641,17 @@ fn __normalized_headers(headers) {
 
 @complexity(allow)
 fn __outbound_config(args) {
-  let env_base = ENV_PREFIX + "_API_BASE_URL"
-  let env_token = ENV_PREFIX + "_TOKEN"
-  let api_base_url = args?.api_base_url ?? harness.env.get_or(env_base, DEFAULT_API_BASE_URL)
-  let access_token = args?.access_token ?? args?.token ?? args?.personal_access_token ?? args?.app_password
+  const env_base = ENV_PREFIX + "_API_BASE_URL"
+  const env_token = ENV_PREFIX + "_TOKEN"
+  const api_base_url = args?.api_base_url ?? harness.env.get_or(env_base, DEFAULT_API_BASE_URL)
+  const access_token = args?.access_token ?? args?.token ?? args?.personal_access_token ?? args?.app_password
     ?? args?.secrets?.access_token
     ?? __env_get(env_token)
   return Ok({api_base_url: to_string(api_base_url), access_token: access_token})
 }
 
 fn __env_get(name) {
-  let resolved = try {
+  const resolved = try {
     harness.env.get(name)
   }
   if is_err(resolved) {
@@ -665,7 +665,7 @@ fn __config_keys() {
 }
 
 fn __body_without(args, keys) {
-  let body = (args ?? {}) + {}
+  const body = (args ?? {}) + {}
   for key in keys {
     body.remove(key)
   }
@@ -674,19 +674,19 @@ fn __body_without(args, keys) {
 
 @complexity(allow)
 fn __api_request(args) {
-  let config = __outbound_config(args ?? {})
+  const config = __outbound_config(args ?? {})
   if is_err(config) {
     return config
   }
-  let cfg = unwrap(config)
-  let method = uppercase(to_string(args?.method ?? "GET"))
-  let path = args?.path ?? args?.url_path ?? ""
-  let url_result = __api_url(cfg.api_base_url, path)
+  const cfg = unwrap(config)
+  const method = uppercase(to_string(args?.method ?? "GET"))
+  const path = args?.path ?? args?.url_path ?? ""
+  const url_result = __api_url(cfg.api_base_url, path)
   if is_err(url_result) {
     return url_result
   }
-  let url = unwrap(url_result)
-  var options = {headers: {Accept: "application/json"}, retry: {max: 0, backoff_ms: 0}}
+  const url = unwrap(url_result)
+  let options = {headers: {Accept: "application/json"}, retry: {max: 0, backoff_ms: 0}}
   if cfg.access_token != nil && trim(to_string(cfg.access_token)) != "" {
     options.headers["Authorization"] = "Bearer " + to_string(cfg.access_token)
   }
@@ -694,16 +694,16 @@ fn __api_request(args) {
     options["body"] = json_stringify(args.body)
     options.headers["Content-Type"] = "application/json"
   }
-  var retried_rate_limit = false
+  let retried_rate_limit = false
   while true {
-    let response_result = try {
+    const response_result = try {
       harness.net.request(method, url, options)
     }
     if is_err(response_result) {
       return __err("transport", to_string(unwrap_err(response_result)))
     }
-    let response = unwrap(response_result)
-    let limited = __maybe_wait_for_rate_limit(response)
+    const response = unwrap(response_result)
+    const limited = __maybe_wait_for_rate_limit(response)
     if is_err(limited) {
       return limited
     }
@@ -712,7 +712,7 @@ fn __api_request(args) {
       continue
     }
     if response.status < 200 || response.status >= 300 {
-      let code = if response.status == 429 || response.status == 503 {
+      const code = if response.status == 429 || response.status == 503 {
         "rate_limited"
       } else if response.status == 401 || response.status == 403 {
         "unauthorized"
@@ -728,7 +728,7 @@ fn __api_request(args) {
     if trim(response.body ?? "") == "" {
       return {status: response.status, headers: response.headers, body: ""}
     }
-    let parsed = try {
+    const parsed = try {
       json_parse(response.body)
     }
     if is_err(parsed) {
@@ -744,20 +744,20 @@ fn __api_request(args) {
  * relative path; absolute URLs return Err.
  */
 fn __api_url(api_base_url, path) {
-  let base = trim(to_string(api_base_url))
-  let path_str = to_string(path ?? "")
+  const base = trim(to_string(api_base_url))
+  const path_str = to_string(path ?? "")
   if starts_with(path_str, "http://") || starts_with(path_str, "https://") {
     return __err(
       "invalid_path",
       PROVIDER_ID + " api request path must be relative; absolute URLs are rejected",
     )
   }
-  let prefix = if ends_with(base, "/") {
+  const prefix = if ends_with(base, "/") {
     base[0:len(base) - 1]
   } else {
     base
   }
-  let suffix = if starts_with(path_str, "/") {
+  const suffix = if starts_with(path_str, "/") {
     path_str
   } else {
     "/" + path_str
@@ -766,8 +766,8 @@ fn __api_url(api_base_url, path) {
 }
 
 fn __repo_ref(args) {
-  let owner = args?.owner ?? args?.workspace ?? args?.project ?? ""
-  let repo = args?.repo ?? args?.repository ?? ""
+  const owner = args?.owner ?? args?.workspace ?? args?.project ?? ""
+  const repo = args?.repo ?? args?.repository ?? ""
   if owner != "" && repo != "" {
     return url_encode(to_string(owner)) + "/" + url_encode(to_string(repo))
   }
@@ -806,12 +806,12 @@ fn __repository_file_path(args) {
   return "/repos/" + __repo_ref(args) + "/contents/" + url_encode(to_string(args?.path ?? ""))
 }
 
-let LIST_FILTER_KEYS = ["state", "type", "sort", "direction", "labels", "milestones", "q", "since", "before"]
+const LIST_FILTER_KEYS = ["state", "type", "sort", "direction", "labels", "milestones", "q", "since", "before"]
 
 fn __filter_query_parts(args) {
-  var parts = []
+  let parts = []
   for key in LIST_FILTER_KEYS {
-    let value = args.get(key)
+    const value = args.get(key)
     if value != nil && trim(to_string(value)) != "" {
       parts = parts + [key + "=" + url_encode(to_string(value))]
     }
@@ -820,8 +820,8 @@ fn __filter_query_parts(args) {
 }
 
 fn __list_path(base_path, args) {
-  var parts = __filter_query_parts(args)
-  let limit = args?.limit ?? args?.per_page
+  let parts = __filter_query_parts(args)
+  const limit = args?.limit ?? args?.per_page
   if limit != nil {
     parts = parts + ["limit=" + url_encode(to_string(limit))]
   }
@@ -836,19 +836,19 @@ fn __list_path(base_path, args) {
 
 @complexity(allow)
 fn __paginate_all(base_path, args) {
-  let config = __outbound_config(args ?? {})
+  const config = __outbound_config(args ?? {})
   if is_err(config) {
     return config
   }
-  let cfg = unwrap(config)
-  let limit = args?.limit ?? args?.per_page ?? DEFAULT_PAGE_LIMIT
-  let max_pages = args?.max_pages ?? 100
-  let initial_url_result = __api_url(cfg.api_base_url, base_path)
+  const cfg = unwrap(config)
+  const limit = args?.limit ?? args?.per_page ?? DEFAULT_PAGE_LIMIT
+  const max_pages = args?.max_pages ?? 100
+  const initial_url_result = __api_url(cfg.api_base_url, base_path)
   if is_err(initial_url_result) {
     return initial_url_result
   }
-  let initial_url = unwrap(initial_url_result)
-  let result = paginate_cursor(
+  const initial_url = unwrap(initial_url_result)
+  const result = paginate_cursor(
     initial_url,
     { url, cursor -> __fetch_paginated_page(url, cursor, limit, args, base_path) },
     "/next_cursor",
@@ -864,19 +864,19 @@ fn __paginate_all(base_path, args) {
 
 @complexity(allow)
 fn __fetch_paginated_page(url, cursor, limit, args, base_path) {
-  let page_num = cursor ?? 1
-  var parts = ["page=" + to_string(page_num), "limit=" + to_string(limit)] + __filter_query_parts(args)
-  let path = base_path + "?" + join(parts, "&")
-  let response = __api_request(args + {method: "GET", path: path})
+  const page_num = cursor ?? 1
+  let parts = ["page=" + to_string(page_num), "limit=" + to_string(limit)] + __filter_query_parts(args)
+  const path = base_path + "?" + join(parts, "&")
+  const response = __api_request(args + {method: "GET", path: path})
   if is_err(response) {
     return response
   }
-  let items = if type_of(response) == "list" {
+  const items = if type_of(response) == "list" {
     response
   } else {
     response?.data ?? []
   }
-  let next_cursor = if len(items) < limit {
+  const next_cursor = if len(items) < limit {
     nil
   } else {
     page_num + 1
@@ -885,21 +885,21 @@ fn __fetch_paginated_page(url, cursor, limit, args, base_path) {
 }
 
 fn __maybe_wait_for_rate_limit(response) {
-  let remaining = __header(response.headers ?? {}, "x-ratelimit-remaining")
+  const remaining = __header(response.headers ?? {}, "x-ratelimit-remaining")
   if remaining == nil || trim(to_string(remaining)) != "0" {
     return Ok(false)
   }
-  let reset = __header(response.headers ?? {}, "x-ratelimit-reset")
+  const reset = __header(response.headers ?? {}, "x-ratelimit-reset")
   if reset == nil || trim(to_string(reset)) == "" {
     return Ok(true)
   }
-  let parsed_reset = try {
+  const parsed_reset = try {
     to_int(reset)
   }
   if is_err(parsed_reset) {
     return Ok(true)
   }
-  let wait_seconds = unwrap(parsed_reset) - to_int(harness.clock.timestamp())
+  const wait_seconds = unwrap(parsed_reset) - to_int(harness.clock.timestamp())
   if wait_seconds > MAX_RATE_LIMIT_WAIT_SECONDS {
     return __err(
       "rate_limited",
@@ -914,14 +914,14 @@ fn __maybe_wait_for_rate_limit(response) {
 }
 
 fn __rate_limit_acquire(args) {
-  let scope = to_string(args?.scope ?? "default")
-  let bucket_state = store_get(RATE_LIMIT_STATE_KEY) ?? {}
-  let config = {
+  const scope = to_string(args?.scope ?? "default")
+  const bucket_state = store_get(RATE_LIMIT_STATE_KEY) ?? {}
+  const config = {
     capacity: args?.capacity ?? DEFAULT_RATE_LIMIT_CAPACITY,
     refill_tokens: args?.refill_tokens ?? DEFAULT_RATE_LIMIT_REFILL_TOKENS,
     refill_interval_ms: args?.refill_interval_ms ?? DEFAULT_RATE_LIMIT_REFILL_INTERVAL_MS,
   }
-  let decision = rate_limit_token_bucket(bucket_state.get(scope), config, args?.now_ms)
+  const decision = rate_limit_token_bucket(bucket_state.get(scope), config, args?.now_ms)
   store_set(RATE_LIMIT_STATE_KEY, bucket_state + {[scope]: decision.state})
   return {allowed: decision.allowed, retry_after_ms: decision.retry_after_ms, scope: scope}
 }
