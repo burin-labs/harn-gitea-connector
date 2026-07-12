@@ -39,7 +39,7 @@ args, or set the `GITEA_TOKEN` environment variable.
 ```sh
 harn check src/lib.harn
 harn fmt --check src/lib.harn tests/*.harn
-for test in tests/*.harn; do harn run "$test" || exit 1; done
+harn connector test . --provider gitea
 ```
 
 ## License
