@@ -9,7 +9,7 @@ Shared Harn connector authoring rules live in the canonical guide:
 Keep this file limited to provider-specific notes and local hazards. Add shared connector guidance
 to the Harn guide first.
 
-## Provider Notes
+## Provider notes
 
 - Webhook event names use `x-gitea-event`; delivery ids use `x-gitea-delivery`.
 - Webhook signatures use `x-gitea-signature` HMAC when a signing secret is configured. The connector
