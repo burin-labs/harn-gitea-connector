@@ -1,6 +1,7 @@
 import { activate, init, normalize_inbound, shutdown } from "../src/lib"
 
-const BODY = "{\"action\":\"opened\",\"repository\":{\"full_name\":\"acme/widgets\"},\"sender\":{\"login\":\"ada\"},\"pull_request\":{\"number\":1}}"
+const BODY =
+  "{\"action\":\"opened\",\"repository\":{\"full_name\":\"acme/widgets\"},\"sender\":{\"login\":\"ada\"},\"pull_request\":{\"number\":1}}"
 
 const HEADERS = {"x-gitea-event": "pull_request", "x-gitea-delivery": "delivery-1"}
 
@@ -25,11 +26,23 @@ pipeline default() {
       headers: HEADERS + {"x-gitea-signature": "sha256=" + raw_signature},
     },
   )
-  assert_eq(prefixed.event.signature_status.state, "verified", "sha256= prefixed signature verifies")
-  const unprefixed = normalize_inbound(
-    {binding_id: "primary", body_text: BODY, headers: HEADERS + {"x-gitea-signature": raw_signature}},
+  assert_eq(
+    prefixed.event.signature_status.state,
+    "verified",
+    "sha256= prefixed signature verifies",
   )
-  assert_eq(unprefixed.event.signature_status.state, "verified", "unprefixed hex signature verifies")
+  const unprefixed = normalize_inbound(
+    {
+      binding_id: "primary",
+      body_text: BODY,
+      headers: HEADERS + {"x-gitea-signature": raw_signature},
+    },
+  )
+  assert_eq(
+    unprefixed.event.signature_status.state,
+    "verified",
+    "unprefixed hex signature verifies",
+  )
   const missing = normalize_inbound({binding_id: "primary", body_text: BODY, headers: HEADERS})
   assert_eq(missing.type, "reject", "missing signature header rejects when secret is configured")
   assert_eq(missing.reject.status, 401, "missing signature is unauthorized")

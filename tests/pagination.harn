@@ -33,7 +33,10 @@ pipeline default() {
     "https://gitea.example.com/api/v1/repos/acme/widgets/pulls?page=3&limit=2",
     {status: 200, body: "[{\"number\":5}]"},
   )
-  const all_pulls = call("pull_requests.list_all", {owner: "acme", repo: "widgets", limit: 2, access_token: "tok"})
+  const all_pulls = call(
+    "pull_requests.list_all",
+    {owner: "acme", repo: "widgets", limit: 2, access_token: "tok"},
+  )
   assert_eq(len(all_pulls.items), 5, "list_all concatenates pages")
   assert_eq(all_pulls.complete, true, "list_all completes when last page is partial")
   assert_eq(all_pulls.pages_fetched, 3, "list_all fetches three pages")
