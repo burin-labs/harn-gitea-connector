@@ -7,7 +7,11 @@ fn __sign(body) {
 }
 
 fn __deliver(event, body) {
-  const headers = {"x-gitea-delivery": "d-" + event, "x-gitea-event": event, "x-gitea-signature": __sign(body)}
+  const headers = {
+    "x-gitea-delivery": "d-" + event,
+    "x-gitea-event": event,
+    "x-gitea-signature": __sign(body),
+  }
   return normalize_inbound({binding_id: "primary", body_text: body, headers: headers})
 }
 
