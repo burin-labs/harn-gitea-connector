@@ -1007,7 +1007,12 @@ fn __rate_limit_acquire(harness: Harness, args) {
     refill_tokens: args?.refill_tokens ?? DEFAULT_RATE_LIMIT_REFILL_TOKENS,
     refill_interval_ms: args?.refill_interval_ms ?? DEFAULT_RATE_LIMIT_REFILL_INTERVAL_MS,
   }
-  const decision = rate_limit_token_bucket(bucket_state.get(scope), config, args?.now_ms)
+  const decision = rate_limit_token_bucket(
+    harness.clock,
+    bucket_state.get(scope),
+    config,
+    args?.now_ms,
+  )
   harness.runtime.store_set(RATE_LIMIT_STATE_KEY, bucket_state + {[scope]: decision.state})
   return {allowed: decision.allowed, retry_after_ms: decision.retry_after_ms, scope: scope}
 }
