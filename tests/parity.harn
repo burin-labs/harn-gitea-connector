@@ -6,20 +6,20 @@ fn __sign(body) {
   return "sha256=" + hmac_sha256(SECRET, body)
 }
 
-fn __deliver(event, body) {
+fn __deliver(harness: Harness, event, body) {
   const headers = {
     "x-gitea-delivery": "d-" + event,
     "x-gitea-event": event,
     "x-gitea-signature": __sign(body),
   }
-  return normalize_inbound({binding_id: "primary", body_text: body, headers: headers})
+  return normalize_inbound(harness, {binding_id: "primary", body_text: body, headers: headers})
 }
 
 @complexity(allow)
-pipeline default() {
-  shutdown()
-  init({signing_secret: SECRET})
-  activate([{id: "primary", path: "/hooks/gitea", secrets: {signing_secret: SECRET}}])
+pipeline default(harness: Harness) {
+  shutdown(harness)
+  init(harness, {signing_secret: SECRET})
+  activate(harness, [{id: "primary", path: "/hooks/gitea", secrets: {signing_secret: SECRET}}])
   // Merge-state: a conflicting (mergeable=false) pull_request surfaces is_conflict + merge_state.
   const conflict_body = json_stringify(
     {
@@ -29,7 +29,7 @@ pipeline default() {
       sender: {login: "ada"},
     },
   )
-  const conflict = __deliver("pull_request", conflict_body)
+  const conflict = __deliver(harness, "pull_request", conflict_body)
   assert_eq(conflict.type, "event", "conflict envelope type")
   assert_eq(conflict.event.payload.merge.is_conflict, true, "is_conflict true")
   assert_eq(conflict.event.payload.merge.merge_state, "conflict", "merge_state conflict")
@@ -42,7 +42,7 @@ pipeline default() {
       sender: {login: "ada"},
     },
   )
-  const clean = __deliver("pull_request", clean_body)
+  const clean = __deliver(harness, "pull_request", clean_body)
   assert_eq(clean.event.payload.merge.is_conflict, false, "clean not conflict")
   assert_eq(clean.event.payload.merge.merge_state, "mergeable", "merge_state mergeable")
   // Merge-state: an unknown mergeable (nil) classifies as unknown, never a conflict.
@@ -54,7 +54,7 @@ pipeline default() {
       sender: {login: "ada"},
     },
   )
-  const unknown = __deliver("pull_request", unknown_body)
+  const unknown = __deliver(harness, "pull_request", unknown_body)
   assert_eq(unknown.event.payload.merge.is_conflict, false, "unknown not conflict")
   assert_eq(unknown.event.payload.merge.merge_state, "unknown", "merge_state unknown")
   // Mention: an issue_comment body yields a typed candidate {handle, command, rest}.
@@ -67,7 +67,7 @@ pipeline default() {
       sender: {login: "carol"},
     },
   )
-  const mention = __deliver("issue_comment", comment_body)
+  const mention = __deliver(harness, "issue_comment", comment_body)
   assert_eq(mention.event.payload.mention.actor, "carol", "mention actor")
   assert_eq(mention.event.payload.mention.target_kind, "issue_comment", "mention target_kind")
   assert_eq(mention.event.payload.mention.target_id, 12, "mention target_id")
@@ -85,7 +85,7 @@ pipeline default() {
       sender: {login: "dave"},
     },
   )
-  const no_mention = __deliver("issues", plain_issue)
+  const no_mention = __deliver(harness, "issues", plain_issue)
   assert_eq(no_mention.event.payload.get("mention"), nil, "no mention key when empty")
-  shutdown()
+  shutdown(harness)
 }

@@ -1,12 +1,12 @@
 import { call, init, shutdown } from "../src/lib"
 
 @complexity(allow)
-pipeline default() {
-  shutdown()
-  init()
-  egress_policy({allow: ["gitea.example.com"], default: "deny"})
-  http_mock_clear()
-  http_mock(
+pipeline default(harness: Harness) {
+  shutdown(harness)
+  init(harness)
+  harness.net.egress_policy({allow: ["gitea.example.com"], default: "deny"})
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://gitea.example.com/api/v1/projects",
     {
@@ -24,10 +24,10 @@ pipeline default() {
       ],
     },
   )
-  const retry_response = call("api.request", {path: "/projects", access_token: "tok"})
+  const retry_response = call(harness, "api.request", {path: "/projects", access_token: "tok"})
   assert_eq(retry_response.ok, true, "rate-limit retry succeeds on second attempt")
-  http_mock_clear()
-  http_mock(
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://gitea.example.com/api/v1/projects",
     {
@@ -36,35 +36,40 @@ pipeline default() {
       headers: {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "9999999999"},
     },
   )
-  const too_far = call("api.request", {path: "/projects", access_token: "tok"})
+  const too_far = call(harness, "api.request", {path: "/projects", access_token: "tok"})
   assert(is_err(too_far), "reset more than 60s away is rejected")
   assert_eq(unwrap_err(too_far).code, "rate_limited", "rate_limited error code")
-  http_mock_clear()
+  harness.testing.http_mock_clear()
   const acquired = call(
+    harness,
     "rate_limit.acquire",
     {capacity: 2, refill_tokens: 1, refill_interval_ms: 1000, scope: "outbound", now_ms: 0},
   )
   assert_eq(acquired.allowed, true, "first acquire allowed")
   const second = call(
+    harness,
     "rate_limit.acquire",
     {capacity: 2, refill_tokens: 1, refill_interval_ms: 1000, scope: "outbound", now_ms: 0},
   )
   assert_eq(second.allowed, true, "second acquire allowed")
   const denied = call(
+    harness,
     "rate_limit.acquire",
     {capacity: 2, refill_tokens: 1, refill_interval_ms: 1000, scope: "outbound", now_ms: 0},
   )
   assert_eq(denied.allowed, false, "third acquire denied at capacity")
   assert(denied.retry_after_ms > 0, "denied returns retry_after_ms")
   const refilled = call(
+    harness,
     "rate_limit.acquire",
     {capacity: 2, refill_tokens: 1, refill_interval_ms: 1000, scope: "outbound", now_ms: 1000},
   )
   assert_eq(refilled.allowed, true, "refill restores a token after the interval")
   const other_scope = call(
+    harness,
     "rate_limit.acquire",
     {capacity: 1, refill_tokens: 1, refill_interval_ms: 1000, scope: "other", now_ms: 0},
   )
   assert_eq(other_scope.allowed, true, "scopes track buckets independently")
-  shutdown()
+  shutdown(harness)
 }
