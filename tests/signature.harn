@@ -6,20 +6,27 @@ const BODY =
 const HEADERS = {"x-gitea-event": "pull_request", "x-gitea-delivery": "delivery-1"}
 
 @complexity(allow)
-pipeline default() {
-  shutdown()
+pipeline default(harness: Harness) {
+  shutdown(harness)
   // F3: with no signing secret configured, inbound webhooks fail-closed (401).
-  init()
-  activate([{id: "primary", path: "/hooks/gitea"}])
-  const no_secret = normalize_inbound({binding_id: "primary", body_text: BODY, headers: HEADERS})
+  init(harness)
+  activate(harness, [{id: "primary", path: "/hooks/gitea"}])
+  const no_secret = normalize_inbound(
+    harness,
+    {binding_id: "primary", body_text: BODY, headers: HEADERS},
+  )
   assert_eq(no_secret.type, "reject", "fail-closed when no secret configured")
   assert_eq(no_secret.reject.status, 401, "fail-closed status is 401")
-  shutdown()
+  shutdown(harness)
   // Configure a signing secret via ctx/binding and exercise the verified paths.
-  init({signing_secret: "super-secret"})
-  activate([{id: "primary", path: "/hooks/gitea", secrets: {signing_secret: "super-secret"}}])
+  init(harness, {signing_secret: "super-secret"})
+  activate(
+    harness,
+    [{id: "primary", path: "/hooks/gitea", secrets: {signing_secret: "super-secret"}}],
+  )
   const raw_signature = hmac_sha256("super-secret", BODY)
   const prefixed = normalize_inbound(
+    harness,
     {
       binding_id: "primary",
       body_text: BODY,
@@ -32,6 +39,7 @@ pipeline default() {
     "sha256= prefixed signature verifies",
   )
   const unprefixed = normalize_inbound(
+    harness,
     {
       binding_id: "primary",
       body_text: BODY,
@@ -43,10 +51,14 @@ pipeline default() {
     "verified",
     "unprefixed hex signature verifies",
   )
-  const missing = normalize_inbound({binding_id: "primary", body_text: BODY, headers: HEADERS})
+  const missing = normalize_inbound(
+    harness,
+    {binding_id: "primary", body_text: BODY, headers: HEADERS},
+  )
   assert_eq(missing.type, "reject", "missing signature header rejects when secret is configured")
   assert_eq(missing.reject.status, 401, "missing signature is unauthorized")
   const wrong_key = normalize_inbound(
+    harness,
     {
       binding_id: "primary",
       body_text: BODY,
@@ -55,5 +67,5 @@ pipeline default() {
   )
   assert_eq(wrong_key.type, "reject", "mismatched signature rejects")
   assert_eq(wrong_key.reject.status, 401, "mismatched signature is unauthorized")
-  shutdown()
+  shutdown(harness)
 }

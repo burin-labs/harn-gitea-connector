@@ -1,39 +1,41 @@
 import { call, init, shutdown } from "../src/lib"
 
 @complexity(allow)
-pipeline default() {
-  shutdown()
-  init()
-  egress_policy({allow: ["gitea.example.com"], default: "deny"})
-  http_mock_clear()
-  http_mock(
+pipeline default(harness: Harness) {
+  shutdown(harness)
+  init(harness)
+  harness.net.egress_policy({allow: ["gitea.example.com"], default: "deny"})
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://gitea.example.com/api/v1/repos/acme/widgets/pulls?state=open&limit=2&page=1",
     {status: 200, body: "[{\"number\":1},{\"number\":2}]"},
   )
   const single_page = call(
+    harness,
     "pull_requests.list",
     {owner: "acme", repo: "widgets", state: "open", limit: 2, page: 1, access_token: "tok"},
   )
   assert_eq(len(single_page), 2, "single page returns 2 pulls")
   assert_eq(single_page[0].number, 1, "first pull number")
-  http_mock_clear()
-  http_mock(
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://gitea.example.com/api/v1/repos/acme/widgets/pulls?page=1&limit=2",
     {status: 200, body: "[{\"number\":1},{\"number\":2}]"},
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     "https://gitea.example.com/api/v1/repos/acme/widgets/pulls?page=2&limit=2",
     {status: 200, body: "[{\"number\":3},{\"number\":4}]"},
   )
-  http_mock(
+  harness.testing.http_mock(
     "GET",
     "https://gitea.example.com/api/v1/repos/acme/widgets/pulls?page=3&limit=2",
     {status: 200, body: "[{\"number\":5}]"},
   )
   const all_pulls = call(
+    harness,
     "pull_requests.list_all",
     {owner: "acme", repo: "widgets", limit: 2, access_token: "tok"},
   )
@@ -41,18 +43,19 @@ pipeline default() {
   assert_eq(all_pulls.complete, true, "list_all completes when last page is partial")
   assert_eq(all_pulls.pages_fetched, 3, "list_all fetches three pages")
   assert_eq(all_pulls.items[4].number, 5, "last item is from final page")
-  http_mock_clear()
-  http_mock(
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
     "GET",
     "https://gitea.example.com/api/v1/repos/acme/widgets/issues?page=1&limit=1&state=open",
     {status: 200, body: "[{\"number\":42}]"},
   )
   const issues = call(
+    harness,
     "issues.list_all",
     {owner: "acme", repo: "widgets", state: "open", limit: 1, max_pages: 1, access_token: "tok"},
   )
   assert_eq(len(issues.items), 1, "issues.list_all respects max_pages cap")
   assert_eq(issues.complete, false, "list_all reports incomplete when max_pages is the stop reason")
-  http_mock_clear()
-  shutdown()
+  harness.testing.http_mock_clear()
+  shutdown(harness)
 }
