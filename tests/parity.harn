@@ -16,7 +16,7 @@ fn __deliver(harness: Harness, event, body) {
 }
 
 @complexity(allow)
-pipeline default(harness: Harness) {
+pipeline test_parity(harness: Harness) {
   shutdown(harness)
   init(harness, {signing_secret: SECRET})
   activate(harness, [{id: "primary", path: "/hooks/gitea", secrets: {signing_secret: SECRET}}])

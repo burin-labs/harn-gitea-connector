@@ -6,7 +6,7 @@ const BODY =
 const HEADERS = {"x-gitea-event": "pull_request", "x-gitea-delivery": "delivery-1"}
 
 @complexity(allow)
-pipeline default(harness: Harness) {
+pipeline test_signature(harness: Harness) {
   shutdown(harness)
   // F3: with no signing secret configured, inbound webhooks fail-closed (401).
   init(harness)

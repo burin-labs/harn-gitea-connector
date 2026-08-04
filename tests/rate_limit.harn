@@ -1,7 +1,7 @@
 import { call, init, shutdown } from "../src/lib"
 
 @complexity(allow)
-pipeline default(harness: Harness) {
+pipeline test_rate_limit(harness: Harness) {
   shutdown(harness)
   init(harness)
   harness.net.egress_policy({allow: ["gitea.example.com"], default: "deny"})

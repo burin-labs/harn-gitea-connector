@@ -87,8 +87,8 @@ pub fn payload_schema() {
 
 /** Initialize connector state with orchestrator context. */
 pub fn init(harness: Harness, ctx = nil) {
-  const next = __state(harness) + {initialized: true, ctx: ctx ?? {}}
-  __set_state(harness, next)
+  const next = __state(harness.runtime) + {initialized: true, ctx: ctx ?? {}}
+  __set_state(harness.runtime, next)
   return next
 }
 
@@ -111,8 +111,8 @@ pub fn activate(harness: Harness, bindings = []) {
     }
     by_id[binding_id] = binding + {binding_id: binding_id}
   }
-  const next = __state(harness) + {bindings: by_id, active: true}
-  __set_state(harness, next)
+  const next = __state(harness.runtime) + {bindings: by_id, active: true}
+  __set_state(harness.runtime, next)
   return {provider: PROVIDER_ID, bindings: len(by_id.keys())}
 }
 
@@ -141,7 +141,12 @@ pub fn normalize_inbound(harness: Harness, raw) {
     return __reject_err(unwrap_err(signed))
   }
   const body_text = unwrap(signed)
-  const verified = __verify_signature(harness, raw, headers, body_text)
+  const verified = __verify_signature(
+    {env: harness.env, runtime: harness.runtime},
+    raw,
+    headers,
+    body_text,
+  )
   if is_err(verified) {
     return __reject_err(unwrap_err(verified))
   }
@@ -190,7 +195,7 @@ pub fn call(harness: Harness, method, args = {}) {
     return __api_request(harness, args ?? {})
   }
   if method == "rate_limit.acquire" {
-    return __rate_limit_acquire(harness, args ?? {})
+    return __rate_limit_acquire({clock: harness.clock, runtime: harness.runtime}, args ?? {})
   }
   if method == "pull_requests.comment" {
     return __comment_post(harness, args, __pull_request_comment_path(args))
@@ -250,18 +255,13 @@ pub fn call(harness: Harness, method, args = {}) {
   )
 }
 
-fn __state(harness: Harness) {
-  return harness.runtime.store_get(STATE_KEY)
-    ?? {
-    initialized: false,
-    active: false,
-    bindings: {},
-    ctx: {},
-  }
+fn __state(harness: HarnessRuntime) {
+  return harness.store_get(STATE_KEY)
+    ?? {initialized: false, active: false, bindings: {}, ctx: {}}
 }
 
-fn __set_state(harness: Harness, state) {
-  harness.runtime.store_set(STATE_KEY, state)
+fn __set_state(harness: HarnessRuntime, state) {
+  harness.store_set(STATE_KEY, state)
   return state
 }
 
@@ -330,7 +330,12 @@ fn __supports_event(event) {
   return false
 }
 
-fn __verify_signature(harness: Harness, raw, headers, body_text) {
+fn __verify_signature(
+  harness: {env: HarnessEnv, runtime: HarnessRuntime},
+  raw,
+  headers,
+  body_text,
+) {
   const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
   if binding_id == nil || trim(to_string(binding_id)) == "" {
     return __err(
@@ -338,7 +343,7 @@ fn __verify_signature(harness: Harness, raw, headers, body_text) {
       "request did not include a binding_id; cannot resolve secret",
     )
   }
-  const secret = __signing_secret(harness, raw)
+  const secret = __signing_secret({env: harness.env, runtime: harness.runtime}, raw)
   // Fail-closed: refuse delivery when no signing secret is configured for this binding. Hosts
   // must configure a secret in connector ctx, the per-binding state, or env before bindings
   // accept webhooks.
@@ -390,8 +395,8 @@ fn __signed_surface(raw) {
  * must not feed the HMAC key. binding_id is required; we refuse the single-binding fallback
  * so that secrets are never resolved without an explicit binding pointer.
  */
-fn __signing_secret(harness: Harness, raw) {
-  const state = __state(harness)
+fn __signing_secret(harness: {env: HarnessEnv, runtime: HarnessRuntime}, raw) {
+  const state = __state(harness.runtime)
   const ctx_secret = state?.ctx?.signing_secret ?? state?.ctx?.secrets?.signing_secret
   if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
     return to_string(ctx_secret)
@@ -408,7 +413,7 @@ fn __signing_secret(harness: Harness, raw) {
   if bound != nil && trim(to_string(bound)) != "" {
     return to_string(bound)
   }
-  const env_secret = __env_get(harness, ENV_PREFIX + "_SIGNING_SECRET")
+  const env_secret = __env_get(harness.env, ENV_PREFIX + "_SIGNING_SECRET")
   if env_secret != nil && trim(to_string(env_secret)) != "" {
     return to_string(env_secret)
   }
@@ -694,10 +699,10 @@ fn __normalized_headers(headers) {
 }
 
 @complexity(allow)
-fn __outbound_config(harness: Harness, args) {
+fn __outbound_config(harness: HarnessEnv, args) {
   const env_base = ENV_PREFIX + "_API_BASE_URL"
   const env_token = ENV_PREFIX + "_TOKEN"
-  const api_base_url = args?.api_base_url ?? harness.env.get_or(env_base, DEFAULT_API_BASE_URL)
+  const api_base_url = args?.api_base_url ?? harness.get_or(env_base, DEFAULT_API_BASE_URL)
   const access_token = args?.access_token ?? args?.token ?? args?.personal_access_token
     ?? args
     ?.app_password
@@ -706,9 +711,9 @@ fn __outbound_config(harness: Harness, args) {
   return Ok({api_base_url: to_string(api_base_url), access_token: access_token})
 }
 
-fn __env_get(harness: Harness, name) {
+fn __env_get(harness: HarnessEnv, name) {
   const resolved = try {
-    harness.env.get(name)
+    harness.get(name)
   }
   if is_err(resolved) {
     return nil
@@ -737,7 +742,7 @@ fn __body_without(args, keys) {
 
 @complexity(allow)
 fn __api_request(harness: Harness, args) {
-  const config = __outbound_config(harness, args ?? {})
+  const config = __outbound_config(harness.env, args ?? {})
   if is_err(config) {
     return config
   }
@@ -766,7 +771,7 @@ fn __api_request(harness: Harness, args) {
       return __err("transport", to_string(unwrap_err(response_result)))
     }
     const response = unwrap(response_result)
-    const limited = __maybe_wait_for_rate_limit(harness, response)
+    const limited = __maybe_wait_for_rate_limit(harness.clock, response)
     if is_err(limited) {
       return limited
     }
@@ -921,7 +926,7 @@ fn __list_path(base_path, args) {
 
 @complexity(allow)
 fn __paginate_all(harness: Harness, base_path, args) {
-  const config = __outbound_config(harness, args ?? {})
+  const config = __outbound_config(harness.env, args ?? {})
   if is_err(config) {
     return config
   }
@@ -970,7 +975,7 @@ fn __fetch_paginated_page(harness: Harness, url, cursor, limit, args, base_path)
   return {items: items, next_cursor: next_cursor}
 }
 
-fn __maybe_wait_for_rate_limit(harness: Harness, response) {
+fn __maybe_wait_for_rate_limit(harness: HarnessClock, response) {
   const remaining = __header(response.headers ?? {}, "x-ratelimit-remaining")
   if remaining == nil || trim(to_string(remaining)) != "0" {
     return Ok(false)
@@ -985,7 +990,7 @@ fn __maybe_wait_for_rate_limit(harness: Harness, response) {
   if is_err(parsed_reset) {
     return Ok(true)
   }
-  const wait_seconds = unwrap(parsed_reset) - to_int(harness.clock.timestamp())
+  const wait_seconds = unwrap(parsed_reset) - to_int(harness.timestamp())
   if wait_seconds > MAX_RATE_LIMIT_WAIT_SECONDS {
     return __err(
       "rate_limited",
@@ -994,12 +999,12 @@ fn __maybe_wait_for_rate_limit(harness: Harness, response) {
     )
   }
   if wait_seconds > 0 {
-    harness.clock.sleep_ms(wait_seconds * 1000)
+    harness.sleep_ms(wait_seconds * 1000)
   }
   return Ok(true)
 }
 
-fn __rate_limit_acquire(harness: Harness, args) {
+fn __rate_limit_acquire(harness: {clock: HarnessClock, runtime: HarnessRuntime}, args) {
   const scope = to_string(args?.scope ?? "default")
   const bucket_state = harness.runtime.store_get(RATE_LIMIT_STATE_KEY) ?? {}
   const config = {
