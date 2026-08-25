@@ -205,13 +205,13 @@ pub fn call(harness: Harness, method, args = {}) {
       harness,
       args
         + {
-        method: "PATCH",
-        path: args?.path ?? __pull_request_path(args),
-        body: __body_without(
-          args,
-          __config_keys() + ["owner", "repo", "pull_request", "pull_request_id", "path"],
-        ),
-      },
+          method: "PATCH",
+          path: args?.path ?? __pull_request_path(args),
+          body: __body_without(
+            args,
+            __config_keys() + ["owner", "repo", "pull_request", "pull_request_id", "path"],
+          ),
+        },
     )
   }
   if method == "pull_requests.list" {
@@ -243,10 +243,10 @@ pub fn call(harness: Harness, method, args = {}) {
       harness,
       args
         + {
-        method: "POST",
-        path: args?.path ?? __commit_status_path(args),
-        body: __body_without(args, __config_keys() + ["owner", "repo", "sha", "path"]),
-      },
+          method: "POST",
+          path: args?.path ?? __commit_status_path(args),
+          body: __body_without(args, __config_keys() + ["owner", "repo", "sha", "path"]),
+        },
     )
   }
   return __api_request(
@@ -286,7 +286,7 @@ fn __reject_err(err) {
     401
   } else if code == "missing_binding_id" || code == "missing_body"
     || code
-    == "invalid_body" {
+      == "invalid_body" {
     400
   } else {
     400
@@ -310,8 +310,7 @@ fn __base_event(payload, headers) {
     return to_string(from_header)
   }
   return payload?.event ?? payload?.event_name ?? payload?.object_kind ?? payload?.type
-    ?? payload
-    ?.action
+    ?? payload?.action
 }
 
 fn __supports_event(event) {
@@ -408,8 +407,7 @@ fn __signing_secret(harness: {env: HarnessEnv, runtime: HarnessRuntime}, raw) {
   const bindings = state?.bindings ?? {}
   const binding = bindings.get(binding_id)
   const bound = binding?.signing_secret ?? binding?.secrets?.signing_secret
-    ?? binding?.config
-    ?.signing_secret
+    ?? binding?.config?.signing_secret
   if bound != nil && trim(to_string(bound)) != "" {
     return to_string(bound)
   }
@@ -649,14 +647,13 @@ fn __actor(payload) {
 
 fn __resource(payload) {
   return payload?.pull_request ?? payload?.pullrequest ?? payload?.issue ?? payload?.comment
-    ?? payload
-    ?.release
+    ?? payload?.release
     ?? payload?.object_attributes
     ?? {
-    revision: payload?.revision,
-    changed_paths: payload?.changed_paths,
-    commits: payload?.commits,
-  }
+      revision: payload?.revision,
+      changed_paths: payload?.changed_paths,
+      commits: payload?.commits,
+    }
 }
 
 fn __dedupe_key(base_event, payload, raw, headers, body_text) {
@@ -674,9 +671,7 @@ fn __dedupe_key(base_event, payload, raw, headers, body_text) {
   const received_at = raw?.received_at ?? raw?.occurred_at ?? ""
   const body_b64 = raw?.body_base64 ?? body_text
   return PROVIDER_ID + ":" + __normalize_kind(base_event) + ":"
-    + sha256(
-    to_string(body_b64) + "|" + to_string(received_at) + "|" + to_string(binding_id),
-  )
+    + sha256(to_string(body_b64) + "|" + to_string(received_at) + "|" + to_string(binding_id))
 }
 
 fn __normalized_headers(headers) {
@@ -704,8 +699,7 @@ fn __outbound_config(env: HarnessEnv, args) {
   const env_token = ENV_PREFIX + "_TOKEN"
   const api_base_url = args?.api_base_url ?? env.get_or(env_base, DEFAULT_API_BASE_URL)
   const access_token = args?.access_token ?? args?.token ?? args?.personal_access_token
-    ?? args
-    ?.app_password
+    ?? args?.app_password
     ?? args?.secrets?.access_token
     ?? __env_get(env, env_token)
   return Ok({api_base_url: to_string(api_base_url), access_token: access_token})
@@ -791,9 +785,7 @@ fn __api_request(harness: Harness, args) {
       return __err(
         code,
         PROVIDER_ID + " API request failed with status " + to_string(response.status) + ": "
-          + to_string(
-          response.body ?? "",
-        ),
+          + to_string(response.body ?? ""),
       )
     }
     if trim(response.body ?? "") == "" {
@@ -855,18 +847,16 @@ fn __comment_post(harness: Harness, args, default_path) {
     harness,
     args
       + {
-      method: "POST",
-      path: args?.path ?? default_path,
-      body: {body: args?.body ?? args?.comment},
-    },
+        method: "POST",
+        path: args?.path ?? default_path,
+        body: {body: args?.body ?? args?.comment},
+      },
   )
 }
 
 fn __pull_request_path(args) {
   return "/repos/" + __repo_ref(args) + "/pulls/"
-    + to_string(
-    args?.pull_request ?? args?.pull_request_id,
-  )
+    + to_string(args?.pull_request ?? args?.pull_request_id)
 }
 
 fn __pull_request_comment_path(args) {
