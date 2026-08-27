@@ -86,14 +86,14 @@ pub fn payload_schema() {
 }
 
 /** Initialize connector state with orchestrator context. */
-pub fn init(harness: Harness, ctx = nil) {
+pub fn init(harness: Harness, ctx: any = nil) {
   const next = __state(harness.runtime) + {initialized: true, ctx: ctx ?? {}}
   __set_state(harness.runtime, next)
   return next
 }
 
 /** Activate configured trigger bindings. */
-pub fn activate(harness: Harness, bindings = []) {
+pub fn activate(harness: Harness, bindings: any = []) {
   let by_id = {}
   let seen_paths = {}
   for binding in bindings ?? [] {
@@ -132,7 +132,7 @@ pub fn shutdown(harness: Harness) {
 
 @complexity(allow)
 /** Verify and normalize an inbound webhook request. */
-pub fn normalize_inbound(harness: Harness, raw) {
+pub fn normalize_inbound(harness: Harness, raw: any) {
   const headers = raw?.headers ?? {}
   // Resolve the signed surface (raw bytes preferred over body_text) before parsing JSON so an
   // unsigned/oversized payload cannot exhaust the parser ahead of signature verification.
@@ -178,13 +178,13 @@ pub fn normalize_inbound(harness: Harness, raw) {
 }
 
 /** Run one polling tick for providers that support polling. */
-pub fn poll_tick(harness: Harness, ctx = nil) {
+pub fn poll_tick(harness: Harness, ctx: any = nil) {
   return {type: "batch", events: [], cursor: ctx?.cursor, state: ctx?.state ?? {}}
 }
 
 @complexity(allow)
 /** Dispatch a supported outbound helper method. */
-pub fn call(harness: Harness, method, args = {}) {
+pub fn call(harness: Harness, method: any, args: any = {}) {
   if !contains(OUTBOUND_METHODS, method) {
     return __err(
       "method_not_found",
@@ -260,16 +260,16 @@ fn __state(runtime: HarnessRuntime) {
     ?? {initialized: false, active: false, bindings: {}, ctx: {}}
 }
 
-fn __set_state(runtime: HarnessRuntime, state) {
+fn __set_state(runtime: HarnessRuntime, state: any) {
   runtime.store_set(STATE_KEY, state)
   return state
 }
 
-fn __err(code, message) {
+fn __err(code: any, message: any) {
   return Err({code: code, message: message})
 }
 
-fn __reject(status, code, message) {
+fn __reject(status: any, code: any, message: any) {
   return {
     type: "reject",
     reject: {
@@ -280,7 +280,7 @@ fn __reject(status, code, message) {
   }
 }
 
-fn __reject_err(err) {
+fn __reject_err(err: any) {
   const code = err?.code ?? "rejected"
   const status = if code == "invalid_signature" || code == "missing_signature" {
     401
@@ -294,7 +294,7 @@ fn __reject_err(err) {
   return __reject(status, code, err?.message ?? "request rejected")
 }
 
-fn __header(headers, name) {
+fn __header(headers: any, name: any) {
   const wanted = lowercase(name)
   for entry in (headers ?? {}).entries() {
     if lowercase(trim(to_string(entry.key))) == wanted {
@@ -304,7 +304,7 @@ fn __header(headers, name) {
   return nil
 }
 
-fn __base_event(payload, headers) {
+fn __base_event(payload: any, headers: any) {
   const from_header = __header(headers, EVENT_HEADER)
   if from_header != nil && from_header != "" {
     return to_string(from_header)
@@ -313,7 +313,7 @@ fn __base_event(payload, headers) {
     ?? payload?.action
 }
 
-fn __supports_event(event) {
+fn __supports_event(event: any) {
   if contains(SUPPORTED_EVENTS, event) {
     return true
   }
@@ -331,9 +331,9 @@ fn __supports_event(event) {
 
 fn __verify_signature(
   harness: {env: HarnessEnv, runtime: HarnessRuntime},
-  raw,
-  headers,
-  body_text,
+  raw: any,
+  headers: any,
+  body_text: any,
 ) {
   const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
   if binding_id == nil || trim(to_string(binding_id)) == "" {
@@ -370,7 +370,7 @@ fn __verify_signature(
  * base64-decode raw.body_base64 so HMAC runs over the actual transport bytes. Reject the
  * request outright when neither field is present so we never HMAC over "" by accident.
  */
-fn __signed_surface(raw) {
+fn __signed_surface(raw: any) {
   const body_text = raw?.body_text ?? raw?.body
   if body_text != nil {
     return Ok(to_string(body_text))
@@ -394,7 +394,7 @@ fn __signed_surface(raw) {
  * must not feed the HMAC key. binding_id is required; we refuse the single-binding fallback
  * so that secrets are never resolved without an explicit binding pointer.
  */
-fn __signing_secret(harness: {env: HarnessEnv, runtime: HarnessRuntime}, raw) {
+fn __signing_secret(harness: {env: HarnessEnv, runtime: HarnessRuntime}, raw: any) {
   const state = __state(harness.runtime)
   const ctx_secret = state?.ctx?.signing_secret ?? state?.ctx?.secrets?.signing_secret
   if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
@@ -419,7 +419,14 @@ fn __signing_secret(harness: {env: HarnessEnv, runtime: HarnessRuntime}, raw) {
 }
 
 @complexity(allow)
-fn __build_event(base_event, payload, raw, headers, signature_status, body_text) {
+fn __build_event(
+  base_event: any,
+  payload: any,
+  raw: any,
+  headers: any,
+  signature_status: any,
+  body_text: any,
+) {
   const kind = __event_kind(base_event, payload)
   let event_payload = {
     event: base_event,
@@ -454,7 +461,7 @@ fn __build_event(base_event, payload, raw, headers, signature_status, body_text)
  * conflicts. Returns `nil` for non-pull_request events or when no PR object is
  * present, so the normalized envelope only carries `merge` when meaningful.
  */
-fn __merge_state(base_event, payload) {
+fn __merge_state(base_event: any, payload: any) {
   if __normalize_kind(base_event) != "pull_request" {
     return nil
   }
@@ -471,7 +478,7 @@ fn __merge_state(base_event, payload) {
  * or false. We classify explicitly via type_of so an unknown value never reads
  * as a conflict (which a bare `!mergeable` would wrongly do for nil).
  */
-fn __merge_state_label(pull) {
+fn __merge_state_label(pull: any) {
   if pull?.merged ?? false {
     return "merged"
   }
@@ -493,7 +500,7 @@ const MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX
  * `nil` when the event has no scannable body or yields no candidates so the
  * envelope only carries `mention` when there is something actionable.
  */
-fn __mention(base_event, payload) {
+fn __mention(base_event: any, payload: any) {
   const kind = __normalize_kind(base_event)
   const scan = __mention_scan_target(kind, payload)
   if scan == nil {
@@ -513,7 +520,7 @@ fn __mention(base_event, payload) {
   }
 }
 
-fn __mention_scan_target(kind, payload) {
+fn __mention_scan_target(kind: any, payload: any) {
   const comment = payload?.comment
   if kind == "issue_comment" || comment != nil {
     if comment == nil {
@@ -546,7 +553,7 @@ fn __mention_scan_target(kind, payload) {
   return nil
 }
 
-fn __extract_mentions(text) {
+fn __extract_mentions(text: any) {
   const body = to_string(text ?? "")
   if trim(body) == "" {
     return []
@@ -558,7 +565,7 @@ fn __extract_mentions(text) {
   return candidates
 }
 
-fn __extract_line_mentions(line) {
+fn __extract_line_mentions(line: any) {
   const words = split(trim(line), " ")
   let candidates = []
   let i = 0
@@ -581,7 +588,7 @@ fn __extract_line_mentions(line) {
   return candidates
 }
 
-fn __join_from(words, start) {
+fn __join_from(words: any, start: any) {
   let rest = []
   let j = start
   while j < len(words) {
@@ -591,7 +598,7 @@ fn __join_from(words, start) {
   return join(rest, " ")
 }
 
-fn __strip_handle(raw) {
+fn __strip_handle(raw: any) {
   let out = ""
   for i in range(0, len(raw)) {
     const ch = raw[i:i + 1]
@@ -604,14 +611,14 @@ fn __strip_handle(raw) {
   return out
 }
 
-fn __signature_status(status) {
+fn __signature_status(status: any) {
   if status == "signed" || status == "verified" {
     return {state: "verified"}
   }
   return {state: "unsigned"}
 }
 
-fn __event_kind(base_event, payload) {
+fn __event_kind(base_event: any, payload: any) {
   const normalized = __normalize_kind(base_event)
   const action = payload?.action ?? payload?.pullrequest?.state
     ?? payload?.object_attributes?.action
@@ -621,11 +628,11 @@ fn __event_kind(base_event, payload) {
   return normalized + "." + __normalize_kind(action)
 }
 
-fn __normalize_kind(value) {
+fn __normalize_kind(value: any) {
   return lowercase(replace(replace(to_string(value), ":", "."), " ", "_"))
 }
 
-fn __repository(payload) {
+fn __repository(payload: any) {
   const repo = payload?.repository ?? payload?.repo ?? {}
   return {
     id: repo?.id ?? repo?.uuid,
@@ -635,7 +642,7 @@ fn __repository(payload) {
   }
 }
 
-fn __actor(payload) {
+fn __actor(payload: any) {
   const actor = payload?.sender ?? payload?.user ?? payload?.actor ?? payload?.pusher ?? {}
   return {
     id: actor?.id ?? actor?.uuid,
@@ -645,7 +652,7 @@ fn __actor(payload) {
   }
 }
 
-fn __resource(payload) {
+fn __resource(payload: any) {
   return payload?.pull_request ?? payload?.pullrequest ?? payload?.issue ?? payload?.comment
     ?? payload?.release
     ?? payload?.object_attributes
@@ -656,7 +663,7 @@ fn __resource(payload) {
     }
 }
 
-fn __dedupe_key(base_event, payload, raw, headers, body_text) {
+fn __dedupe_key(base_event: any, payload: any, raw: any, headers: any, body_text: any) {
   // Trust only the host-set delivery header — payload?.id / .uuid / .delivery_id are
   // attacker-controlled and would let a sender either suppress replay protection (pin id
   // constant) or evade it (vary id) at will. When no delivery header is present, derive the
@@ -674,7 +681,7 @@ fn __dedupe_key(base_event, payload, raw, headers, body_text) {
     + sha256(to_string(body_b64) + "|" + to_string(received_at) + "|" + to_string(binding_id))
 }
 
-fn __normalized_headers(headers) {
+fn __normalized_headers(headers: any) {
   let normalized = {}
   const event = __header(headers, EVENT_HEADER)
   if event != nil {
@@ -694,7 +701,7 @@ fn __normalized_headers(headers) {
 }
 
 @complexity(allow)
-fn __outbound_config(env: HarnessEnv, args) {
+fn __outbound_config(env: HarnessEnv, args: any) {
   const env_base = ENV_PREFIX + "_API_BASE_URL"
   const env_token = ENV_PREFIX + "_TOKEN"
   const api_base_url = args?.api_base_url ?? env.get_or(env_base, DEFAULT_API_BASE_URL)
@@ -705,7 +712,7 @@ fn __outbound_config(env: HarnessEnv, args) {
   return Ok({api_base_url: to_string(api_base_url), access_token: access_token})
 }
 
-fn __env_get(env: HarnessEnv, name) {
+fn __env_get(env: HarnessEnv, name: any) {
   const resolved = try {
     env.get(name)
   }
@@ -726,7 +733,7 @@ fn __config_keys() {
   ]
 }
 
-fn __body_without(args, keys) {
+fn __body_without(args: any, keys: any) {
   const body = (args ?? {}) + {}
   for key in keys {
     body.remove(key)
@@ -735,7 +742,7 @@ fn __body_without(args, keys) {
 }
 
 @complexity(allow)
-fn __api_request(harness: Harness, args) {
+fn __api_request(harness: Harness, args: any) {
   const config = __outbound_config(harness.env, args ?? {})
   if is_err(config) {
     return config
@@ -806,7 +813,7 @@ fn __api_request(harness: Harness, args) {
  * Authorization header) cannot be redirected to attacker-chosen hosts. Callers must pass a
  * relative path; absolute URLs return Err.
  */
-fn __api_url(api_base_url, path) {
+fn __api_url(api_base_url: any, path: any) {
   const base = trim(to_string(api_base_url))
   const path_str = to_string(path ?? "")
   if starts_with(path_str, "http://") || starts_with(path_str, "https://") {
@@ -828,7 +835,7 @@ fn __api_url(api_base_url, path) {
   return Ok(prefix + suffix)
 }
 
-fn __repo_ref(args) {
+fn __repo_ref(args: any) {
   const owner = args?.owner ?? args?.workspace ?? args?.project ?? ""
   const repo = args?.repo ?? args?.repository ?? ""
   if owner != "" && repo != "" {
@@ -842,7 +849,7 @@ fn __repo_ref(args) {
  * computed path; `args.comment` is accepted as an alias for `args.body`. Shared
  * by `pull_requests.comment` and `issues.comment`, which only differ in path.
  */
-fn __comment_post(harness: Harness, args, default_path) {
+fn __comment_post(harness: Harness, args: any, default_path: any) {
   return __api_request(
     harness,
     args
@@ -854,25 +861,25 @@ fn __comment_post(harness: Harness, args, default_path) {
   )
 }
 
-fn __pull_request_path(args) {
+fn __pull_request_path(args: any) {
   return "/repos/" + __repo_ref(args) + "/pulls/"
     + to_string(args?.pull_request ?? args?.pull_request_id)
 }
 
-fn __pull_request_comment_path(args) {
+fn __pull_request_comment_path(args: any) {
   return __pull_request_path(args) + "/comments"
 }
 
-fn __issue_comment_path(args) {
+fn __issue_comment_path(args: any) {
   return "/repos/" + __repo_ref(args) + "/issues/" + to_string(args?.issue ?? args?.issue_id)
     + "/comments"
 }
 
-fn __commit_status_path(args) {
+fn __commit_status_path(args: any) {
   return "/repos/" + __repo_ref(args) + "/statuses/" + to_string(args?.sha ?? args?.commit)
 }
 
-fn __repository_file_path(args) {
+fn __repository_file_path(args: any) {
   return "/repos/" + __repo_ref(args) + "/contents/" + url_encode(to_string(args?.path ?? ""))
 }
 
@@ -888,7 +895,7 @@ const LIST_FILTER_KEYS = [
   "before",
 ]
 
-fn __filter_query_parts(args) {
+fn __filter_query_parts(args: any) {
   let parts = []
   for key in LIST_FILTER_KEYS {
     const value = args.get(key)
@@ -899,7 +906,7 @@ fn __filter_query_parts(args) {
   return parts
 }
 
-fn __list_path(base_path, args) {
+fn __list_path(base_path: any, args: any) {
   let parts = __filter_query_parts(args)
   const limit = args?.limit ?? args?.per_page
   if limit != nil {
@@ -915,7 +922,7 @@ fn __list_path(base_path, args) {
 }
 
 @complexity(allow)
-fn __paginate_all(harness: Harness, base_path, args) {
+fn __paginate_all(harness: Harness, base_path: any, args: any) {
   const config = __outbound_config(harness.env, args ?? {})
   if is_err(config) {
     return config
@@ -943,7 +950,14 @@ fn __paginate_all(harness: Harness, base_path, args) {
 }
 
 @complexity(allow)
-fn __fetch_paginated_page(harness: Harness, url, cursor, limit, args, base_path) {
+fn __fetch_paginated_page(
+  harness: Harness,
+  url: any,
+  cursor: any,
+  limit: any,
+  args: any,
+  base_path: any,
+) {
   const page_num = cursor ?? 1
   let parts = ["page=" + to_string(page_num), "limit=" + to_string(limit)]
     + __filter_query_parts(args)
@@ -965,7 +979,7 @@ fn __fetch_paginated_page(harness: Harness, url, cursor, limit, args, base_path)
   return {items: items, next_cursor: next_cursor}
 }
 
-fn __maybe_wait_for_rate_limit(clock: HarnessClock, response) {
+fn __maybe_wait_for_rate_limit(clock: HarnessClock, response: any) {
   const remaining = __header(response.headers ?? {}, "x-ratelimit-remaining")
   if remaining == nil || trim(to_string(remaining)) != "0" {
     return Ok(false)
@@ -994,7 +1008,7 @@ fn __maybe_wait_for_rate_limit(clock: HarnessClock, response) {
   return Ok(true)
 }
 
-fn __rate_limit_acquire(harness: {clock: HarnessClock, runtime: HarnessRuntime}, args) {
+fn __rate_limit_acquire(harness: {clock: HarnessClock, runtime: HarnessRuntime}, args: any) {
   const scope = to_string(args?.scope ?? "default")
   const bucket_state = harness.runtime.store_get(RATE_LIMIT_STATE_KEY) ?? {}
   const config = {
