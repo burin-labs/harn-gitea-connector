@@ -2,11 +2,11 @@ import { activate, init, normalize_inbound, shutdown } from "../src/lib"
 
 const SECRET = "parity-secret"
 
-fn __sign(body) {
+fn __sign(body: any) {
   return "sha256=" + hmac_sha256(SECRET, body)
 }
 
-fn __deliver(harness: Harness, event, body) {
+fn __deliver(harness: Harness, event: any, body: any) {
   const headers = {
     "x-gitea-delivery": "d-" + event,
     "x-gitea-event": event,
