@@ -1,0 +1,657 @@
+import { verify_hmac_signature } from "std/connectors/shared"
+
+pub type GitForgeProfile = {
+  provider_id: string,
+  state_key: string,
+  rate_limit_state_key: string,
+  api_base_url: string,
+  delivery_headers: list<string>,
+  schema_name: string,
+  revision_resource_fallback: bool,
+}
+
+/** Bind a Gitea-compatible webhook and repository API to immutable provider facts. */
+pub fn create_git_forge(profile: GitForgeProfile) {
+  const PROVIDER_ID = profile.provider_id
+  const STATE_KEY = profile.state_key
+  const RATE_LIMIT_STATE_KEY = profile.rate_limit_state_key
+  const DEFAULT_API_BASE_URL = profile.api_base_url
+  const ENV_PREFIX = uppercase(profile.provider_id)
+  const SIGNATURE_HEADER = "x-gitea-signature"
+  const EVENT_HEADER = "x-gitea-event"
+  const SUPPORTED_EVENTS = [
+    "push",
+    "pull_request",
+    "issues",
+    "issue_comment",
+    "release",
+    "repository",
+    "star",
+  ]
+  const DELIVERY_HEADERS = profile.delivery_headers
+  const MENTION_HANDLE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+  /** Return this connector's provider id. */
+  fn provider_id() {
+    return PROVIDER_ID
+  }
+  /** Return supported trigger kinds. */
+  fn kinds() {
+    return ["webhook"]
+  }
+  /** Return the normalized payload schema metadata. */
+  fn payload_schema() {
+    return {
+      harn_schema_name: profile.schema_name,
+      json_schema: {
+        type: "object",
+        required: ["event", "repository", "actor", "raw"],
+        additionalProperties: true,
+        properties: {
+          event: {type: "string"},
+          action: {type: ["string", "null"]},
+          repository: {type: ["object", "null"], additionalProperties: true},
+          actor: {type: ["object", "null"], additionalProperties: true},
+          resource: {type: ["object", "null"], additionalProperties: true},
+          raw: {type: "object"},
+        },
+      },
+    }
+  }
+  fn __state(runtime: HarnessRuntime) {
+    return runtime.store_get(STATE_KEY)
+      ?? {initialized: false, active: false, bindings: {}, ctx: {}}
+  }
+  fn __set_state(runtime: HarnessRuntime, state: any) {
+    runtime.store_set(STATE_KEY, state)
+    return state
+  }
+  /** Initialize connector state with orchestrator context. */
+  fn init(harness: Harness, ctx: any = nil) {
+    const next = __state(harness.runtime) + {initialized: true, ctx: ctx ?? {}}
+    __set_state(harness.runtime, next)
+    return next
+  }
+  fn __err(code: any, message: any) {
+    return Err({code: code, message: message})
+  }
+  /** Activate configured trigger bindings. */
+  fn activate(harness: Harness, bindings: any = []) {
+    let by_id = {}
+    let seen_paths = {}
+    for binding in bindings ?? [] {
+      const binding_id = (binding?.binding_id ?? binding?.id ?? "binding-")
+        + to_string(len(by_id.keys()))
+      const path = binding?.path ?? binding?.match?.path
+      if path != nil && path != "" {
+        if seen_paths.get(path) {
+          return __err(
+            "activation",
+            PROVIDER_ID + " connector path `" + path + "` is configured by multiple bindings",
+          )
+        }
+        seen_paths[path] = true
+      }
+      by_id[binding_id] = binding + {binding_id: binding_id}
+    }
+    const next = __state(harness.runtime) + {bindings: by_id, active: true}
+    __set_state(harness.runtime, next)
+    return {provider: PROVIDER_ID, bindings: len(by_id.keys())}
+  }
+  /**
+   * Clear connector lifecycle state.
+   *
+   * @host_only — this entry point wipes cached binding state including secrets resolved during
+   * activate(). It must only be invoked by the orchestrator's connector lifecycle, never from
+   * untrusted pipeline nodes or external callers. Full caller-identity gating is tracked as a
+   * host responsibility.
+   */
+  fn shutdown(harness: Harness) {
+    harness.runtime.store_delete(STATE_KEY)
+    harness.runtime.store_delete(RATE_LIMIT_STATE_KEY)
+    return {provider: PROVIDER_ID, active: false}
+  }
+  /**
+   * Resolve the byte surface that was signed. Prefer raw.body_text when present; otherwise
+   * base64-decode raw.body_base64 so HMAC runs over the actual transport bytes. Reject the
+   * request outright when neither field is present so we never HMAC over "" by accident.
+   */
+  fn __signed_surface(raw: any) {
+    const body_text = raw?.body_text ?? raw?.body
+    if body_text != nil {
+      return Ok(to_string(body_text))
+    }
+    const body_b64 = raw?.body_base64
+    if body_b64 != nil && trim(to_string(body_b64)) != "" {
+      const decoded = try {
+        base64_decode(to_string(body_b64))
+      }
+      if is_err(decoded) {
+        return __err("invalid_body", "body_base64 is not valid base64")
+      }
+      return Ok(unwrap(decoded))
+    }
+    return __err("missing_body", "request has neither body_text nor body_base64")
+  }
+  fn __reject(status: any, code: any, message: any) {
+    return {
+      type: "reject",
+      reject: {
+        status: status,
+        body: json_stringify({error: code, message: message}),
+        content_type: "application/json",
+      },
+    }
+  }
+  fn __reject_err(err: any) {
+    const code = err?.code ?? "rejected"
+    const status = if code == "invalid_signature" || code == "missing_signature" {
+      401
+    } else if code == "missing_binding_id" || code == "missing_body"
+      || code
+        == "invalid_body" {
+      400
+    } else {
+      400
+    }
+    return __reject(status, code, err?.message ?? "request rejected")
+  }
+  fn __env_get(env: HarnessEnv, name: any) {
+    const resolved = try {
+      env.get(name)
+    }
+    if is_err(resolved) {
+      return nil
+    }
+    return unwrap(resolved)
+  }
+  /**
+   * Resolve the signing secret from trusted sources only: orchestrator ctx, the per-binding
+   * state seeded via activate(), or the process env. raw.* fields are attacker-controlled and
+   * must not feed the HMAC key. binding_id is required; we refuse the single-binding fallback
+   * so that secrets are never resolved without an explicit binding pointer.
+   */
+  fn __signing_secret(harness: {env: HarnessEnv, runtime: HarnessRuntime}, raw: any) {
+    const state = __state(harness.runtime)
+    const ctx_secret = state?.ctx?.signing_secret ?? state?.ctx?.secrets?.signing_secret
+    if ctx_secret != nil && trim(to_string(ctx_secret)) != "" {
+      return to_string(ctx_secret)
+    }
+    const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
+    if binding_id == nil || trim(to_string(binding_id)) == "" {
+      return nil
+    }
+    const bindings = state?.bindings ?? {}
+    const binding = bindings.get(binding_id)
+    const bound = binding?.signing_secret ?? binding?.secrets?.signing_secret
+      ?? binding?.config?.signing_secret
+    if bound != nil && trim(to_string(bound)) != "" {
+      return to_string(bound)
+    }
+    const env_secret = __env_get(harness.env, ENV_PREFIX + "_SIGNING_SECRET")
+    if env_secret != nil && trim(to_string(env_secret)) != "" {
+      return to_string(env_secret)
+    }
+    return nil
+  }
+  fn __header(headers: any, name: any) {
+    const wanted = lowercase(name)
+    for entry in (headers ?? {}).entries() {
+      if lowercase(trim(to_string(entry.key))) == wanted {
+        return trim(to_string(entry.value))
+      }
+    }
+    return nil
+  }
+  fn __verify_signature(
+    harness: {env: HarnessEnv, runtime: HarnessRuntime},
+    raw: any,
+    headers: any,
+    body_text: any,
+  ) {
+    const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id
+    if binding_id == nil || trim(to_string(binding_id)) == "" {
+      return __err(
+        "missing_binding_id",
+        "request did not include a binding_id; cannot resolve secret",
+      )
+    }
+    const secret = __signing_secret({env: harness.env, runtime: harness.runtime}, raw)
+    // Fail-closed: refuse delivery when no signing secret is configured for this binding. Hosts
+    // must configure a secret in connector ctx, the per-binding state, or env before bindings
+    // accept webhooks.
+    if secret == nil || trim(to_string(secret)) == "" {
+      return __err("missing_signature", "no signing secret configured for this binding")
+    }
+    const provided = __header(headers, SIGNATURE_HEADER)
+    if provided == nil || provided == "" {
+      return __err(
+        "missing_signature",
+        SIGNATURE_HEADER + " header missing but a signing_secret is configured",
+      )
+    }
+    if verify_hmac_signature(body_text, to_string(provided), to_string(secret)) {
+      return Ok("signed")
+    }
+    return __err(
+      "invalid_signature",
+      SIGNATURE_HEADER + " did not match the configured signing_secret",
+    )
+  }
+  fn __base_event(payload: any, headers: any) {
+    const from_header = __header(headers, EVENT_HEADER)
+    if from_header != nil && from_header != "" {
+      return to_string(from_header)
+    }
+    return payload?.event ?? payload?.event_name ?? payload?.object_kind ?? payload?.type
+      ?? payload?.action
+  }
+  fn __normalize_kind(value: any) {
+    return lowercase(replace(replace(to_string(value), ":", "."), " ", "_"))
+  }
+  fn __supports_event(event: any) {
+    if contains(SUPPORTED_EVENTS, event) {
+      return true
+    }
+    const normalized = __normalize_kind(event)
+    // Match either an exact normalized name (e.g. "push") or a fully-qualified subkind
+    // ("push.created"). A bare prefix is rejected so "pushy" never spoofs "push".
+    for supported in SUPPORTED_EVENTS {
+      const supported_norm = __normalize_kind(supported)
+      if normalized == supported_norm || starts_with(normalized, supported_norm + ".") {
+        return true
+      }
+    }
+    return false
+  }
+  fn __event_kind(base_event: any, payload: any) {
+    const normalized = __normalize_kind(base_event)
+    const action = payload?.action ?? payload?.pullrequest?.state
+      ?? payload?.object_attributes?.action
+    if action == nil || action == "" || contains(normalized, ".") {
+      return normalized
+    }
+    return normalized + "." + __normalize_kind(action)
+  }
+  fn __repository(payload: any) {
+    const repo = payload?.repository ?? payload?.repo ?? {}
+    return {
+      id: repo?.id ?? repo?.uuid,
+      name: repo?.name,
+      full_name: repo?.full_name ?? repo?.path_with_namespace ?? repo?.canonical_name,
+      url: repo?.html_url ?? repo?.web_url ?? repo?.links?.html?.href ?? repo?.url,
+    }
+  }
+  fn __actor(payload: any) {
+    const actor = payload?.sender ?? payload?.user ?? payload?.actor ?? payload?.pusher ?? {}
+    return {
+      id: actor?.id ?? actor?.uuid,
+      username: actor?.login ?? actor?.username ?? actor?.nickname ?? actor?.canonical_name,
+      name: actor?.name ?? actor?.display_name,
+      email: actor?.email,
+    }
+  }
+  fn __resource(payload: any) {
+    return payload?.pull_request ?? payload?.pullrequest ?? payload?.issue ?? payload?.comment
+      ?? payload?.release
+      ?? payload?.object_attributes
+      ?? if profile.revision_resource_fallback {
+        {
+          revision: payload?.revision,
+          changed_paths: payload?.changed_paths,
+          commits: payload?.commits,
+        }
+      } else {
+        nil
+      }
+  }
+  /**
+   * `mergeable` is tri-state: nil (unknown — Gitea has not computed it yet), true,
+   * or false. We classify explicitly via type_of so an unknown value never reads
+   * as a conflict (which a bare `!mergeable` would wrongly do for nil).
+   */
+  fn __merge_state_label(pull: any) {
+    if pull?.merged ?? false {
+      return "merged"
+    }
+    const mergeable = pull?.mergeable
+    if type_of(mergeable) != "bool" {
+      return "unknown"
+    }
+    if mergeable {
+      return "mergeable"
+    }
+    return "conflict"
+  }
+  /**
+   * Surface PR merge/conflict state for pull_request events. Gitea exposes
+   * `pull_request.mergeable` (bool); a `false` value means the PR currently has
+   * conflicts. Returns `nil` for non-pull_request events or when no PR object is
+   * present, so the normalized envelope only carries `merge` when meaningful.
+   */
+  fn __merge_state(base_event: any, payload: any) {
+    if __normalize_kind(base_event) != "pull_request" {
+      return nil
+    }
+    const pull = payload?.pull_request ?? payload?.pullrequest
+    if pull == nil {
+      return nil
+    }
+    const label = __merge_state_label(pull)
+    return {is_conflict: label == "conflict", merge_state: label}
+  }
+  fn __mention_scan_target(kind: any, payload: any) {
+    const comment = payload?.comment
+    if kind == "issue_comment" || comment != nil {
+      if comment == nil {
+        return nil
+      }
+      const issue = payload?.issue ?? payload?.pull_request
+      return {
+        target_id: issue?.number ?? issue?.id,
+        target_kind: if payload?.pull_request != nil {
+          "pull_request_comment"
+        } else {
+          "issue_comment"
+        },
+        text: comment?.body,
+        url: comment?.html_url ?? comment?.url,
+      }
+    }
+    if kind == "issues" {
+      const issue = payload?.issue
+      if issue == nil {
+        return nil
+      }
+      return {
+        target_id: issue?.number ?? issue?.id,
+        target_kind: "issue",
+        text: issue?.body,
+        url: issue?.html_url ?? issue?.url,
+      }
+    }
+    return nil
+  }
+  fn __strip_handle(raw: any) {
+    let out = ""
+    for i in range(0, len(raw)) {
+      const ch = raw[i:i + 1]
+      if contains(MENTION_HANDLE_CHARS, ch) {
+        out = out + ch
+      } else {
+        return out
+      }
+    }
+    return out
+  }
+  fn __join_from(words: any, start: any) {
+    let rest = []
+    let j = start
+    while j < len(words) {
+      rest = rest + [words[j]]
+      j = j + 1
+    }
+    return join(rest, " ")
+  }
+  fn __extract_line_mentions(line: any) {
+    const words = split(trim(line), " ")
+    let candidates = []
+    let i = 0
+    while i < len(words) {
+      const word = words[i]
+      if starts_with(word, "@") && len(word) > 1 {
+        const handle = __strip_handle(word[1:len(word)])
+        if handle != "" {
+          const command = if i + 1 < len(words) {
+            words[i + 1]
+          } else {
+            nil
+          }
+          candidates = candidates
+            + [{command: command, handle: handle, rest: __join_from(words, i + 2)}]
+        }
+      }
+      i = i + 1
+    }
+    return candidates
+  }
+  fn __extract_mentions(text: any) {
+    const body = to_string(text ?? "")
+    if trim(body) == "" {
+      return []
+    }
+    let candidates = []
+    for line in split(body, "\n") {
+      candidates = candidates + __extract_line_mentions(line)
+    }
+    return candidates
+  }
+  /**
+   * Extract `@handle command args...` mentions from issue, issue_comment, and PR
+   * review-comment bodies. Pure CPU-only string scanning — no network. Returns
+   * `nil` when the event has no scannable body or yields no candidates so the
+   * envelope only carries `mention` when there is something actionable.
+   */
+  fn __mention(base_event: any, payload: any) {
+    const kind = __normalize_kind(base_event)
+    const scan = __mention_scan_target(kind, payload)
+    if scan == nil {
+      return nil
+    }
+    const candidates = __extract_mentions(scan.text)
+    if len(candidates) == 0 {
+      return nil
+    }
+    const actor = __actor(payload)
+    return {
+      actor: actor.username,
+      candidates: candidates,
+      target_id: scan.target_id,
+      target_kind: scan.target_kind,
+      url: scan.url,
+    }
+  }
+  fn __dedupe_key(base_event: any, payload: any, raw: any, headers: any, body_text: any) {
+    // Trust only the host-set delivery header — payload?.id / .uuid / .delivery_id are
+    // attacker-controlled and would let a sender either suppress replay protection (pin id
+    // constant) or evade it (vary id) at will. When no delivery header is present, derive the
+    // key from immutable host-side fields.
+    for header in DELIVERY_HEADERS {
+      const value = __header(headers, header)
+      if value != nil && value != "" {
+        return PROVIDER_ID + ":" + __normalize_kind(base_event) + ":" + to_string(value)
+      }
+    }
+    const binding_id = raw?.metadata?.binding_id ?? raw?.binding_id ?? ""
+    const received_at = raw?.received_at ?? raw?.occurred_at ?? ""
+    const body_b64 = raw?.body_base64 ?? body_text
+    return PROVIDER_ID + ":" + __normalize_kind(base_event) + ":"
+      + sha256(to_string(body_b64) + "|" + to_string(received_at) + "|" + to_string(binding_id))
+  }
+  fn __signature_status(status: any) {
+    if status == "signed" || status == "verified" {
+      return {state: "verified"}
+    }
+    return {state: "unsigned"}
+  }
+  fn __normalized_headers(headers: any) {
+    let normalized = {}
+    const event = __header(headers, EVENT_HEADER)
+    if event != nil {
+      normalized[EVENT_HEADER] = event
+    }
+    const signature = __header(headers, SIGNATURE_HEADER)
+    if signature != nil {
+      normalized[SIGNATURE_HEADER] = signature
+    }
+    for header in DELIVERY_HEADERS {
+      const value = __header(headers, header)
+      if value != nil {
+        normalized[header] = value
+      }
+    }
+    return normalized
+  }
+  @complexity(allow)
+  fn __build_event(
+    base_event: any,
+    payload: any,
+    raw: any,
+    headers: any,
+    signature_status: any,
+    body_text: any,
+  ) {
+    const kind = __event_kind(base_event, payload)
+    let event_payload = {
+      event: base_event,
+      action: payload?.action,
+      repository: __repository(payload),
+      actor: __actor(payload),
+      resource: __resource(payload),
+      raw: payload,
+    }
+    const merge = __merge_state(base_event, payload)
+    if merge != nil {
+      event_payload["merge"] = merge
+    }
+    const mention = __mention(base_event, payload)
+    if mention != nil {
+      event_payload["mention"] = mention
+    }
+    return {
+      kind: kind,
+      occurred_at: raw?.occurred_at ?? payload?.updated_at ?? payload?.created_at
+        ?? payload?.timestamp,
+      dedupe_key: __dedupe_key(base_event, payload, raw, headers, body_text),
+      signature_status: __signature_status(signature_status),
+      payload: event_payload,
+      headers: __normalized_headers(headers),
+    }
+  }
+  @complexity(allow)
+  /** Verify and normalize an inbound webhook request. */
+  fn normalize_inbound(harness: Harness, raw: any) {
+    const headers = raw?.headers ?? {}
+    // Resolve the signed surface (raw bytes preferred over body_text) before parsing JSON so an
+    // unsigned/oversized payload cannot exhaust the parser ahead of signature verification.
+    const signed = __signed_surface(raw)
+    if is_err(signed) {
+      return __reject_err(unwrap_err(signed))
+    }
+    const body_text = unwrap(signed)
+    const verified = __verify_signature(
+      {env: harness.env, runtime: harness.runtime},
+      raw,
+      headers,
+      body_text,
+    )
+    if is_err(verified) {
+      return __reject_err(unwrap_err(verified))
+    }
+    const signature_status = unwrap(verified)
+    const parsed = try {
+      json_parse(body_text)
+    }
+    if is_err(parsed) {
+      return __reject(400, "invalid_json", PROVIDER_ID + " payload body is not valid JSON")
+    }
+    const payload = unwrap(parsed)
+    const base_event = __base_event(payload, headers)
+    if base_event == nil || base_event == "" {
+      return __reject(
+        400,
+        "missing_event",
+        "missing " + PROVIDER_ID + " event header or payload event",
+      )
+    }
+    if !__supports_event(base_event) {
+      return __reject(
+        400,
+        "unsupported_event",
+        "unsupported " + PROVIDER_ID + " event `" + to_string(base_event) + "`",
+      )
+    }
+    const event = __build_event(base_event, payload, raw, headers, signature_status, body_text)
+    return {type: "event", event: event}
+  }
+  @complexity(allow)
+  fn __outbound_config(env: HarnessEnv, args: any) {
+    const env_base = ENV_PREFIX + "_API_BASE_URL"
+    const env_token = ENV_PREFIX + "_TOKEN"
+    const api_base_url = args?.api_base_url ?? env.get_or(env_base, DEFAULT_API_BASE_URL)
+    const access_token = args?.access_token ?? args?.token ?? args?.personal_access_token
+      ?? args?.app_password
+      ?? args?.secrets?.access_token
+      ?? __env_get(env, env_token)
+    return Ok({api_base_url: to_string(api_base_url), access_token: access_token})
+  }
+  /**
+   * SSRF defence: refuse absolute-URL paths so the configured api_base_url (and any attached
+   * Authorization header) cannot be redirected to attacker-chosen hosts. Callers must pass a
+   * relative path; absolute URLs return Err.
+   */
+  fn __api_url(api_base_url: any, path: any) {
+    const base = trim(to_string(api_base_url))
+    const path_str = to_string(path ?? "")
+    if starts_with(path_str, "http://") || starts_with(path_str, "https://") {
+      return __err(
+        "invalid_path",
+        PROVIDER_ID + " api request path must be relative; absolute URLs are rejected",
+      )
+    }
+    const prefix = if ends_with(base, "/") {
+      base[0:len(base) - 1]
+    } else {
+      base
+    }
+    const suffix = if starts_with(path_str, "/") {
+      path_str
+    } else {
+      "/" + path_str
+    }
+    return Ok(prefix + suffix)
+  }
+  fn __repo_ref(args: any) {
+    const owner = args?.owner ?? args?.workspace ?? args?.project ?? ""
+    const repo = args?.repo ?? args?.repository ?? ""
+    if owner != "" && repo != "" {
+      return url_encode(to_string(owner)) + "/" + url_encode(to_string(repo))
+    }
+    return url_encode(to_string(args?.repo_full_name ?? args?.repository_full_name ?? ""))
+  }
+  fn __pull_request_path(args: any) {
+    return "/repos/" + __repo_ref(args) + "/pulls/"
+      + to_string(args?.pull_request ?? args?.pull_request_id)
+  }
+  fn __pull_request_comment_path(args: any) {
+    return __pull_request_path(args) + "/comments"
+  }
+  fn __issue_comment_path(args: any) {
+    return "/repos/" + __repo_ref(args) + "/issues/" + to_string(args?.issue ?? args?.issue_id)
+      + "/comments"
+  }
+  fn __commit_status_path(args: any) {
+    return "/repos/" + __repo_ref(args) + "/statuses/" + to_string(args?.sha ?? args?.commit)
+  }
+  fn __repository_file_path(args: any) {
+    return "/repos/" + __repo_ref(args) + "/contents/" + url_encode(to_string(args?.path ?? ""))
+  }
+  return {
+    provider_id: provider_id,
+    kinds: kinds,
+    payload_schema: payload_schema,
+    init: init,
+    activate: activate,
+    shutdown: shutdown,
+    normalize_inbound: normalize_inbound,
+    __err: __err,
+    __header: __header,
+    __outbound_config: __outbound_config,
+    __api_url: __api_url,
+    __repo_ref: __repo_ref,
+    __pull_request_path: __pull_request_path,
+    __pull_request_comment_path: __pull_request_comment_path,
+    __issue_comment_path: __issue_comment_path,
+    __commit_status_path: __commit_status_path,
+    __repository_file_path: __repository_file_path,
+  }
+}

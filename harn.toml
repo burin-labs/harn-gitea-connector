@@ -9,6 +9,7 @@ connector_contract = "v1"
 
 [exports]
 default = "src/lib.harn"
+git_forge = "src/git_forge.harn"
 
 [[providers]]
 id = "gitea"
