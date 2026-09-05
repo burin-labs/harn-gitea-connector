@@ -1,0 +1,17 @@
+import { activate, init, normalize_inbound, shutdown } from "../src/lib"
+
+pipeline test_binding_identity(harness: Harness) {
+  shutdown(harness)
+  init(harness)
+  activate(harness, [{id: "primary", path: "/hook", secrets: {signing_secret: "bound-secret"}}])
+  const result = normalize_inbound(
+    harness,
+    {
+      binding_id: "primary",
+      body_text: "{}",
+      headers: {"x-gitea-event": "push", "x-gitea-signature": hmac_sha256("bound-secret", "{}")},
+    },
+  )
+  assert_eq(result.type, "event", "an explicit binding ID must resolve its own signing secret")
+  shutdown(harness)
+}
