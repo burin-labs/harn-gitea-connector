@@ -215,7 +215,7 @@ pub fn create_git_forge(profile: GitForgeProfile) {
         "request did not include a binding_id; cannot resolve secret",
       )
     }
-    const secret = __signing_secret({env: harness.env, runtime: harness.runtime}, raw)
+    const secret = __signing_secret(pick(harness, ["env", "runtime"]), raw)
     // Fail-closed: refuse delivery when no signing secret is configured for this binding. Hosts
     // must configure a secret in connector ctx, the per-binding state, or env before bindings
     // accept webhooks.
@@ -538,12 +538,7 @@ pub fn create_git_forge(profile: GitForgeProfile) {
       return __reject_err(unwrap_err(signed))
     }
     const body_text = unwrap(signed)
-    const verified = __verify_signature(
-      {env: harness.env, runtime: harness.runtime},
-      raw,
-      headers,
-      body_text,
-    )
+    const verified = __verify_signature(pick(harness, ["env", "runtime"]), raw, headers, body_text)
     if is_err(verified) {
       return __reject_err(unwrap_err(verified))
     }
