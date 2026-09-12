@@ -94,7 +94,7 @@ pub fn call(harness: Harness, method: any, args: any = {}) {
     return __api_request(harness, args ?? {})
   }
   if method == "rate_limit.acquire" {
-    return __rate_limit_acquire({clock: harness.clock, runtime: harness.runtime}, args ?? {})
+    return __rate_limit_acquire(pick(harness, ["clock", "runtime"]), args ?? {})
   }
   if method == "pull_requests.comment" {
     return __comment_post(harness, args, engine.__pull_request_comment_path(args))
