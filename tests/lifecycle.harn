@@ -1,0 +1,29 @@
+import { activate, init, shutdown } from "../src/lib"
+
+pipeline test_gitea_lifecycle_state_isolation(harness: Harness) {
+  const state_key = "harn-gitea-connector.state"
+  const rate_key = "harn-gitea-connector.rate_limit"
+  const foreign_key = "other-connector.state"
+  shutdown(harness)
+  harness.runtime.store_set(foreign_key, {active: true})
+  const initialized = init(harness, {name: "gitea"})
+  assert_eq(initialized.initialized, true, "initialization reports state")
+  assert_eq(initialized.ctx.name, "gitea", "context stored")
+  const first = activate(harness, [{id: "primary", path: "/hooks/gitea"}])
+  assert_eq(first, {provider: "gitea", bindings: 1}, "response shape")
+  assert_eq(harness.runtime.store_get(state_key).bindings.primary.binding_id, "primary")
+  const before = harness.runtime.store_get(state_key)
+  const duplicate = activate(
+    harness,
+    [{id: "one", path: "/hooks/shared"}, {id: "two", path: "/hooks/shared"}],
+  )
+  assert(is_err(duplicate), "duplicate path rejects")
+  assert_eq(unwrap_err(duplicate).code, "activation")
+  assert_eq(harness.runtime.store_get(state_key), before, "duplicate path cannot mutate state")
+  harness.runtime.store_set(rate_key, {scope: 1})
+  assert_eq(shutdown(harness), {provider: "gitea", active: false}, "shutdown response shape")
+  assert_eq(harness.runtime.store_get(state_key), nil, "own lifecycle state cleared")
+  assert_eq(harness.runtime.store_get(rate_key), nil, "own rate state cleared")
+  assert_eq(harness.runtime.store_get(foreign_key).active, true, "foreign state preserved")
+  harness.runtime.store_delete(foreign_key)
+}
